@@ -51,6 +51,15 @@ class ErpServiceClass {
     return this.dataSource.saveRetailer(retailer);
   }
 
+  async deleteRetailer(id: number): Promise<void> {
+    const orders = await this.dataSource.getOrders();
+    const hasOrders = orders.some((o) => o.retailerId === id);
+    if (hasOrders) {
+      throw new Error('Cannot delete retailer with existing orders. Please delete associated orders first or deactivate the account.');
+    }
+    return this.dataSource.deleteRetailer(id);
+  }
+
   // --- Suppliers ---
   async getSuppliers(): Promise<Supplier[]> {
     return this.dataSource.getSuppliers();
@@ -64,6 +73,15 @@ class ErpServiceClass {
     return this.dataSource.saveSupplier(supplier);
   }
 
+  async deleteSupplier(id: number): Promise<void> {
+    const purchases = await this.dataSource.getPurchases();
+    const hasPurchases = purchases.some((p) => p.supplierId === id);
+    if (hasPurchases) {
+      throw new Error('Cannot delete supplier with existing purchase records. Please delete purchase records first or deactivate the vendor.');
+    }
+    return this.dataSource.deleteSupplier(id);
+  }
+
   // --- Products & Auditable Stock Adjustments ---
   async getProducts(): Promise<Product[]> {
     return this.dataSource.getProducts();
@@ -75,6 +93,10 @@ class ErpServiceClass {
 
   async saveProduct(product: Omit<Product, 'id' | 'createdAt'> & { id?: number }): Promise<Product> {
     return this.dataSource.saveProduct(product);
+  }
+
+  async deleteProduct(id: number): Promise<void> {
+    return this.dataSource.deleteProduct(id);
   }
 
   async recordStockAdjustment(productId: number, quantityDelta: number, reason: string): Promise<void> {
@@ -131,6 +153,15 @@ class ErpServiceClass {
     await this.dataSource.updateOrderStatus(orderId, 'CHANGES_REQUESTED', feedback);
   }
 
+  async deleteOrder(orderId: number): Promise<void> {
+    const invoices = await this.dataSource.getInvoices();
+    const hasInvoice = invoices.some((inv) => inv.orderId === orderId);
+    if (hasInvoice) {
+      throw new Error('Cannot delete an order with an active invoice. Please delete the invoice first.');
+    }
+    return this.dataSource.deleteOrder(orderId);
+  }
+
   // --- Invoicing ---
   async getInvoices(): Promise<Invoice[]> {
     return this.dataSource.getInvoices();
@@ -185,27 +216,71 @@ class ErpServiceClass {
     // Update retailer outstanding balance
     await this.dataSource.updateRetailerBalance(order.retailerId, order.totalAmount);
 
-    // Schedule delivery shipment
-    const retailer = await this.dataSource.getRetailerById(order.retailerId);
-    await this.dataSource.createDelivery({
-      orderId: order.id,
-      orderNumber: order.orderNumber,
-      invoiceId: invoice.id,
-      invoiceNumber: invoice.invoiceNumber,
-      retailerId: order.retailerId,
-      retailerName: order.retailerName,
-      deliveryAddress: retailer?.address || 'Default address',
-      status: 'SCHEDULED',
-      scheduledDate: now + 24 * 60 * 60 * 1000,
-      notes: `Generated from invoice ${invoiceNumber}`,
-    });
-
     return invoice;
   }
 
-  // --- Deliveries ---
+  async deleteInvoice(invoiceId: number): Promise<void> {
+    const invoice = await this.dataSource.getInvoiceById(invoiceId);
+    if (!invoice) throw new Error('Invoice not found');
+
+    // Deduct invoice amount from retailer outstanding balance
+    await this.dataSource.updateRetailerBalance(invoice.retailerId, -invoice.remainingBalance);
+
+    // Revert order back to APPROVED status
+    await this.dataSource.updateOrderStatus(invoice.orderId, 'APPROVED', 'Invoice deleted; returned to approved state');
+
+    // Delete invoice records
+    await this.dataSource.deleteInvoice(invoiceId);
+  }
+
+  // --- Deliveries & Moving for Delivery ---
   async getDeliveries(): Promise<Delivery[]> {
     return this.dataSource.getDeliveries();
+  }
+
+  async moveOrderForDelivery(
+    orderId: number,
+    options?: {
+      deliveryAddress?: string;
+      driverName?: string;
+      driverPhone?: string;
+      notes?: string;
+    }
+  ): Promise<Delivery> {
+    const order = await this.dataSource.getOrderById(orderId);
+    if (!order) throw new Error('Order not found');
+
+    const invoices = await this.dataSource.getInvoices();
+    const invoice = invoices.find((inv) => inv.orderId === orderId);
+
+    const retailer = await this.dataSource.getRetailerById(order.retailerId);
+    const deliveryAddress =
+      options?.deliveryAddress || retailer?.address || 'Customer destination';
+
+    const now = Date.now();
+    const delivery = await this.dataSource.createDelivery({
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      invoiceId: invoice?.id || null,
+      invoiceNumber: invoice?.invoiceNumber,
+      retailerId: order.retailerId,
+      retailerName: order.retailerName,
+      deliveryAddress,
+      driverName: options?.driverName || undefined,
+      driverPhone: options?.driverPhone || undefined,
+      status: 'SCHEDULED',
+      scheduledDate: now + 24 * 60 * 60 * 1000,
+      notes: options?.notes || `Scheduled for delivery from order ${order.orderNumber}`,
+    });
+
+    // Update order status to DISPATCHED or keep state synced
+    await this.dataSource.updateOrderStatus(
+      order.id,
+      order.status === 'INVOICED' ? 'DISPATCHED' : order.status,
+      `Moved for delivery (Delivery ID: ${delivery.id})`
+    );
+
+    return delivery;
   }
 
   async dispatchDelivery(
@@ -257,6 +332,10 @@ class ErpServiceClass {
         });
       }
     }
+  }
+
+  async deleteDelivery(id: number): Promise<void> {
+    return this.dataSource.deleteDelivery(id);
   }
 
   // --- Purchases ---
@@ -323,6 +402,19 @@ class ErpServiceClass {
     return purchase;
   }
 
+  async deletePurchase(id: number): Promise<void> {
+    const purchases = await this.dataSource.getPurchases();
+    const purchase = purchases.find((p) => p.id === id);
+    if (purchase) {
+      // Deduct unpaid amount from supplier payable balance
+      const unpaid = purchase.totalAmount - purchase.amountPaid;
+      if (unpaid > 0) {
+        await this.dataSource.updateSupplierBalance(purchase.supplierId, -unpaid);
+      }
+    }
+    return this.dataSource.deletePurchase(id);
+  }
+
   // --- Payments ---
   async getPayments(): Promise<Payment[]> {
     return this.dataSource.getPayments();
@@ -335,11 +427,12 @@ class ErpServiceClass {
     paymentMethod: PaymentMethod,
     referenceNumber: string,
     notes: string,
-    recordedByUserId: number,
+    recordedByUserId: string | number,
     recordedByName: string
   ): Promise<Payment> {
     const retailer = await this.dataSource.getRetailerById(retailerId);
     if (!retailer) throw new Error('Retailer not found');
+    if (amount <= 0) throw new Error('Payment amount must be greater than zero');
 
     const now = Date.now();
     const payment = await this.dataSource.createPayment({
@@ -379,11 +472,12 @@ class ErpServiceClass {
     paymentMethod: PaymentMethod,
     referenceNumber: string,
     notes: string,
-    recordedByUserId: number,
+    recordedByUserId: string | number,
     recordedByName: string
   ): Promise<Payment> {
     const supplier = await this.dataSource.getSupplierById(supplierId);
     if (!supplier) throw new Error('Supplier not found');
+    if (amount <= 0) throw new Error('Disbursement amount must be greater than zero');
 
     const now = Date.now();
     const payment = await this.dataSource.createPayment({
@@ -404,12 +498,35 @@ class ErpServiceClass {
     // Deduct supplier payable balance
     await this.dataSource.updateSupplierBalance(supplierId, -amount);
 
+    // Update purchase payment status if linked to specific purchase
+    if (purchaseId) {
+      await this.dataSource.updatePurchasePayment(purchaseId, amount);
+    }
+
     return payment;
+  }
+
+  async deletePayment(id: number): Promise<void> {
+    const payments = await this.dataSource.getPayments();
+    const payment = payments.find((p) => p.id === id);
+    if (payment) {
+      // Reverse balance effect
+      if (payment.type === 'RETAILER_COLLECTION') {
+        await this.dataSource.updateRetailerBalance(payment.entityId, payment.amount);
+      } else if (payment.type === 'SUPPLIER_PAYMENT') {
+        await this.dataSource.updateSupplierBalance(payment.entityId, payment.amount);
+      }
+    }
+    return this.dataSource.deletePayment(id);
   }
 
   // --- Inventory Movements ---
   async getMovements(): Promise<InventoryMovement[]> {
     return this.dataSource.getMovements();
+  }
+
+  async deleteMovement(id: number): Promise<void> {
+    return this.dataSource.deleteMovement(id);
   }
 
   // --- Users & Team ---
@@ -419,6 +536,10 @@ class ErpServiceClass {
 
   async saveUser(user: Omit<User, 'id' | 'createdAt'> & { id?: number }): Promise<User> {
     return this.dataSource.saveUser(user);
+  }
+
+  async deleteUser(id: number): Promise<void> {
+    return this.dataSource.deleteUser(id);
   }
 }
 

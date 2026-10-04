@@ -1,28 +1,41 @@
 import React, { useState } from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { useErp } from '../../context/ErpContext';
 import { User, Retailer } from '../../types/erp';
 import { Modal } from '../common/Modal';
+import { ConfirmDialog } from '../common/ConfirmDialog';
+import { formatCurrency } from '../../lib/format';
 import {
   Users2,
   Plus,
   Phone,
   Mail,
   Store,
-  DollarSign,
-  ShoppingCart,
   Edit2,
   CheckCircle,
-  XCircle,
+  Trash2,
 } from 'lucide-react';
 
 export const SalespersonsScreen: React.FC = () => {
-  const { users, retailers, orders, payments, saveUser, saveRetailer } = useErp();
+  const { isOwner } = useAuth();
+  const {
+    users,
+    retailers,
+    orders,
+    saveUser,
+    deleteUser,
+    saveRetailer,
+  } = useErp();
 
   const [isEditingUser, setIsEditingUser] = useState(false);
   const [editingUser, setEditingUser] = useState<Partial<User> | null>(null);
 
   // Assign retailers modal
   const [assigningRep, setAssigningRep] = useState<User | null>(null);
+
+  // Delete User Confirmation
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const salespersons = users.filter((u) => u.role === 'SALESPERSON');
 
@@ -44,6 +57,7 @@ export const SalespersonsScreen: React.FC = () => {
 
     await saveUser({
       id: editingUser.id,
+      cloudId: editingUser.cloudId,
       username: editingUser.username.trim(),
       fullName: editingUser.fullName.trim(),
       role: 'SALESPERSON',
@@ -56,12 +70,27 @@ export const SalespersonsScreen: React.FC = () => {
     setEditingUser(null);
   };
 
-  const handleToggleRetailerAssignment = async (retailer: Retailer, repId: number) => {
-    const isCurrentlyAssigned = retailer.assignedSalespersonId === repId;
+  const handleToggleRetailerAssignment = async (retailer: Retailer, rep: User) => {
+    const repIdentifier = rep.cloudId || rep.id;
+    const isCurrentlyAssigned =
+      retailer.assignedSalespersonId === rep.cloudId ||
+      retailer.assignedSalespersonId === rep.id;
+
     await saveRetailer({
       ...retailer,
-      assignedSalespersonId: isCurrentlyAssigned ? null : repId,
+      assignedSalespersonId: isCurrentlyAssigned ? null : repIdentifier,
     });
+  };
+
+  const handleConfirmDeleteUser = async () => {
+    if (!userToDelete) return;
+    try {
+      setIsDeleting(true);
+      await deleteUser(userToDelete.id);
+      setUserToDelete(null);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   return (
@@ -77,27 +106,37 @@ export const SalespersonsScreen: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={handleStartAdd}
-          className="self-start sm:self-auto flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2.5 rounded-xl shadow-xs transition-all active:scale-95 text-xs sm:text-sm min-h-[44px]"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Add Sales Representative</span>
-        </button>
+        {isOwner && (
+          <button
+            onClick={handleStartAdd}
+            className="self-start sm:self-auto flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2.5 rounded-xl shadow-xs transition-all active:scale-95 text-xs sm:text-sm min-h-[44px]"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add Sales Representative</span>
+          </button>
+        )}
       </div>
 
       {/* Grid of Sales Rep Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {salespersons.map((sp) => {
-          const assignedStores = retailers.filter((r) => r.assignedSalespersonId === sp.id);
-          const repOrders = orders.filter((o) => o.salespersonId === sp.id);
+          const assignedStores = retailers.filter(
+            (r) =>
+              r.assignedSalespersonId === sp.cloudId ||
+              r.assignedSalespersonId === sp.id
+          );
+          const repOrders = orders.filter(
+            (o) =>
+              o.salespersonId === sp.cloudId ||
+              o.salespersonId === sp.id
+          );
           const totalSales = repOrders
             .filter((o) => o.status !== 'CANCELLED' && o.status !== 'REJECTED')
             .reduce((sum, o) => sum + o.totalAmount, 0);
 
           return (
             <div
-              key={sp.id}
+              key={sp.cloudId || sp.id}
               className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs flex flex-col justify-between"
             >
               <div>
@@ -108,7 +147,7 @@ export const SalespersonsScreen: React.FC = () => {
                     </div>
                     <div>
                       <h3 className="font-bold text-base text-slate-900">{sp.fullName}</h3>
-                      <p className="text-xs text-slate-500">@{sp.username}</p>
+                      <p className="text-xs text-slate-500 font-mono">@{sp.username}</p>
                     </div>
                   </div>
                   <span
@@ -142,7 +181,7 @@ export const SalespersonsScreen: React.FC = () => {
                       Total Revenue
                     </span>
                     <span className="font-black text-blue-700 text-sm mt-0.5 block">
-                      ${totalSales.toFixed(2)}
+                      {formatCurrency(totalSales)}
                     </span>
                   </div>
                   <div>
@@ -166,16 +205,28 @@ export const SalespersonsScreen: React.FC = () => {
                   <span>Assign Accounts ({assignedStores.length})</span>
                 </button>
 
-                <button
-                  onClick={() => {
-                    setEditingUser(sp);
-                    setIsEditingUser(true);
-                  }}
-                  className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl min-h-[36px] min-w-[36px] flex items-center justify-center"
-                  title="Edit Salesperson"
-                >
-                  <Edit2 className="w-3.5 h-3.5" />
-                </button>
+                {isOwner && (
+                  <>
+                    <button
+                      onClick={() => {
+                        setEditingUser(sp);
+                        setIsEditingUser(true);
+                      }}
+                      className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl min-h-[36px] min-w-[36px] flex items-center justify-center"
+                      title="Edit Representative"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      onClick={() => setUserToDelete(sp)}
+                      className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl min-h-[36px] min-w-[36px] flex items-center justify-center"
+                      title="Delete Representative"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           );
@@ -204,6 +255,7 @@ export const SalespersonsScreen: React.FC = () => {
                 required
                 value={editingUser.fullName || ''}
                 onChange={(e) => setEditingUser({ ...editingUser, fullName: e.target.value })}
+                placeholder="e.g. Ramesh Thapa"
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm outline-none"
               />
             </div>
@@ -217,7 +269,8 @@ export const SalespersonsScreen: React.FC = () => {
                 required
                 value={editingUser.username || ''}
                 onChange={(e) => setEditingUser({ ...editingUser, username: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm outline-none"
+                placeholder="e.g. ramesh_sales"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm outline-none font-mono"
               />
             </div>
 
@@ -230,6 +283,7 @@ export const SalespersonsScreen: React.FC = () => {
                   type="tel"
                   value={editingUser.phone || ''}
                   onChange={(e) => setEditingUser({ ...editingUser, phone: e.target.value })}
+                  placeholder="+977 9800000000"
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm outline-none"
                 />
               </div>
@@ -242,6 +296,7 @@ export const SalespersonsScreen: React.FC = () => {
                   type="email"
                   value={editingUser.email || ''}
                   onChange={(e) => setEditingUser({ ...editingUser, email: e.target.value })}
+                  placeholder="ramesh@distriflow.internal"
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm outline-none"
                 />
               </div>
@@ -256,7 +311,7 @@ export const SalespersonsScreen: React.FC = () => {
                 className="w-4 h-4 text-blue-600 rounded"
               />
               <label htmlFor="activeUserCheckbox" className="text-xs font-semibold text-slate-700">
-                Active account (Authorized to log in and create orders)
+                Active account (Authorized to access mobile sales portal)
               </label>
             </div>
 
@@ -291,11 +346,13 @@ export const SalespersonsScreen: React.FC = () => {
           <div className="space-y-4">
             <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
               {retailers.map((r) => {
-                const isAssigned = r.assignedSalespersonId === assigningRep.id;
+                const isAssigned =
+                  r.assignedSalespersonId === assigningRep.cloudId ||
+                  r.assignedSalespersonId === assigningRep.id;
                 return (
                   <div
                     key={r.id}
-                    onClick={() => handleToggleRetailerAssignment(r, assigningRep.id)}
+                    onClick={() => handleToggleRetailerAssignment(r, assigningRep)}
                     className={`p-3 rounded-xl border text-xs cursor-pointer flex items-center justify-between transition-colors ${
                       isAssigned
                         ? 'bg-blue-50/80 border-blue-300 text-blue-950 font-bold'
@@ -334,6 +391,19 @@ export const SalespersonsScreen: React.FC = () => {
             </div>
           </div>
         </Modal>
+      )}
+
+      {/* Delete User Confirmation */}
+      {userToDelete && (
+        <ConfirmDialog
+          isOpen={true}
+          onClose={() => setUserToDelete(null)}
+          onConfirm={handleConfirmDeleteUser}
+          title={`Remove Sales Representative ${userToDelete.fullName}?`}
+          message={`Are you sure you want to remove ${userToDelete.fullName} (@${userToDelete.username})? Their assigned accounts will become unassigned.`}
+          confirmText="Yes, Remove Agent"
+          isLoading={isDeleting}
+        />
       )}
     </div>
   );

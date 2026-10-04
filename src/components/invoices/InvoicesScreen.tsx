@@ -5,20 +5,30 @@ import { Invoice, InvoiceItem } from '../../types/erp';
 import { ErpService } from '../../services/ErpService';
 import { StatusBadge } from '../common/Badge';
 import { Modal } from '../common/Modal';
+import { ConfirmDialog } from '../common/ConfirmDialog';
+import { PrintableInvoice } from './PrintableInvoice';
+import { formatCurrency } from '../../lib/format';
 import {
-  FileText,
   Search,
   DollarSign,
   Printer,
-  Calendar,
-  AlertCircle,
   Eye,
-  CheckCircle,
+  Trash2,
+  Truck,
+  ArrowRight,
 } from 'lucide-react';
 
 export const InvoicesScreen: React.FC = () => {
   const { isOwner } = useAuth();
-  const { invoices, setActiveTab, recordRetailerPayment } = useErp();
+  const {
+    invoices,
+    retailers,
+    deliveries,
+    setActiveTab,
+    recordRetailerPayment,
+    deleteInvoice,
+    moveOrderForDelivery,
+  } = useErp();
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -32,6 +42,13 @@ export const InvoicesScreen: React.FC = () => {
   const [payMethod, setPayMethod] = useState<'CASH' | 'BANK_TRANSFER' | 'CHEQUE' | 'MOBILE_MONEY'>('CASH');
   const [payRef, setPayRef] = useState('');
   const [payNotes, setPayNotes] = useState('');
+
+  // Delete Invoice confirmation
+  const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Print mode
+  const [isPrinting, setIsPrinting] = useState(false);
 
   const filtered = invoices.filter((inv) => {
     const matchesSearch =
@@ -52,6 +69,20 @@ export const InvoicesScreen: React.FC = () => {
     } finally {
       setLoadingItems(false);
     }
+  };
+
+  const handleTriggerPrint = async (inv: Invoice) => {
+    setSelectedInvoice(inv);
+    try {
+      const items = await ErpService.getInvoiceItems(inv.id);
+      setInvoiceItems(items);
+    } catch {
+      setInvoiceItems([]);
+    }
+    setIsPrinting(true);
+    setTimeout(() => {
+      window.print();
+    }, 200);
   };
 
   const handleConfirmPayment = async (e: React.FormEvent) => {
@@ -76,6 +107,28 @@ export const InvoicesScreen: React.FC = () => {
     }
   };
 
+  const handleConfirmDelete = async () => {
+    if (!invoiceToDelete) return;
+    try {
+      setIsDeleting(true);
+      await deleteInvoice(invoiceToDelete.id);
+      if (selectedInvoice?.id === invoiceToDelete.id) {
+        setSelectedInvoice(null);
+      }
+      setInvoiceToDelete(null);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const selectedRetailerObj = selectedInvoice
+    ? retailers.find((r) => r.id === selectedInvoice.retailerId)
+    : null;
+
+  const isDeliveryScheduled = selectedInvoice
+    ? deliveries.some((d) => d.orderId === selectedInvoice.orderId)
+    : false;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -85,7 +138,7 @@ export const InvoicesScreen: React.FC = () => {
             Customer Invoices
           </h2>
           <p className="text-xs sm:text-sm text-slate-500">
-            Official billing documents, payment statuses, and customer receivables tracking
+            Official billing documents, payment statuses, print invoices, and receivables tracking
           </p>
         </div>
       </div>
@@ -159,10 +212,10 @@ export const InvoicesScreen: React.FC = () => {
                       <StatusBadge status={inv.paymentStatus} />
                     </td>
                     <td className="py-3.5 px-4 text-right font-black text-slate-900">
-                      ${inv.totalAmount.toFixed(2)}
+                      {formatCurrency(inv.totalAmount)}
                     </td>
                     <td className="py-3.5 px-4 text-right font-black text-amber-700">
-                      ${inv.remainingBalance.toFixed(2)}
+                      {formatCurrency(inv.remainingBalance)}
                     </td>
                     <td className="py-3.5 px-4 text-center" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-center gap-1">
@@ -172,6 +225,13 @@ export const InvoicesScreen: React.FC = () => {
                           title="View Invoice"
                         >
                           <Eye className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleTriggerPrint(inv)}
+                          className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg min-h-[36px] min-w-[36px]"
+                          title="Print Clean Invoice"
+                        >
+                          <Printer className="w-4 h-4" />
                         </button>
                         {inv.remainingBalance > 0 && (
                           <button
@@ -183,6 +243,15 @@ export const InvoicesScreen: React.FC = () => {
                             title="Collect Payment"
                           >
                             <DollarSign className="w-4 h-4" />
+                          </button>
+                        )}
+                        {isOwner && (
+                          <button
+                            onClick={() => setInvoiceToDelete(inv)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg min-h-[36px] min-w-[36px]"
+                            title="Delete Invoice"
+                          >
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         )}
                       </div>
@@ -199,7 +268,10 @@ export const InvoicesScreen: React.FC = () => {
       {selectedInvoice && (
         <Modal
           isOpen={true}
-          onClose={() => setSelectedInvoice(null)}
+          onClose={() => {
+            setSelectedInvoice(null);
+            setIsPrinting(false);
+          }}
           title={`Invoice ${selectedInvoice.invoiceNumber}`}
           subtitle={`Issued on ${new Date(selectedInvoice.invoiceDate).toLocaleDateString()}`}
           maxWidth="2xl"
@@ -221,13 +293,13 @@ export const InvoicesScreen: React.FC = () => {
               <div>
                 <span className="text-slate-400 font-bold block">Total Amount</span>
                 <span className="font-black text-slate-900 text-sm mt-0.5 block">
-                  ${selectedInvoice.totalAmount.toFixed(2)}
+                  {formatCurrency(selectedInvoice.totalAmount)}
                 </span>
               </div>
               <div>
                 <span className="text-slate-400 font-bold block">Balance Due</span>
                 <span className="font-black text-amber-700 text-sm mt-0.5 block">
-                  ${selectedInvoice.remainingBalance.toFixed(2)}
+                  {formatCurrency(selectedInvoice.remainingBalance)}
                 </span>
               </div>
             </div>
@@ -256,10 +328,10 @@ export const InvoicesScreen: React.FC = () => {
                         <tr key={item.id}>
                           <td className="p-2.5 font-bold text-slate-900">{item.productName}</td>
                           <td className="p-2.5 text-center font-bold">{item.quantity}</td>
-                          <td className="p-2.5 text-right">${item.unitPrice.toFixed(2)}</td>
-                          <td className="p-2.5 text-right text-slate-500">${item.discount.toFixed(2)}</td>
+                          <td className="p-2.5 text-right">{formatCurrency(item.unitPrice)}</td>
+                          <td className="p-2.5 text-right text-slate-500">{formatCurrency(item.discount)}</td>
                           <td className="p-2.5 text-right font-black text-slate-900">
-                            ${item.total.toFixed(2)}
+                            {formatCurrency(item.total)}
                           </td>
                         </tr>
                       ))}
@@ -270,27 +342,64 @@ export const InvoicesScreen: React.FC = () => {
             </div>
 
             {/* Actions */}
-            <div className="pt-4 border-t border-slate-200 flex items-center justify-between">
-              <button
-                onClick={() => window.print()}
-                className="px-4 py-2 border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-xl text-xs font-bold flex items-center gap-1.5 min-h-[44px]"
-              >
-                <Printer className="w-4 h-4" />
-                Print / Export
-              </button>
-
-              {selectedInvoice.remainingBalance > 0 && (
+            <div className="pt-4 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => {
-                    setPayingInvoice(selectedInvoice);
-                    setPayAmount(selectedInvoice.remainingBalance);
-                  }}
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs min-h-[44px] flex items-center gap-1.5"
+                  onClick={() => handleTriggerPrint(selectedInvoice)}
+                  className="px-4 py-2 border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-xl text-xs font-bold flex items-center gap-1.5 min-h-[44px]"
                 >
-                  <DollarSign className="w-4 h-4" />
-                  Record Collection (${selectedInvoice.remainingBalance.toFixed(2)})
+                  <Printer className="w-4 h-4" />
+                  Print Clean Invoice
                 </button>
-              )}
+
+                {isDeliveryScheduled ? (
+                  <button
+                    onClick={() => {
+                      setSelectedInvoice(null);
+                      setActiveTab('deliveries');
+                    }}
+                    className="px-4 py-2 bg-sky-50 text-sky-800 hover:bg-sky-100 border border-sky-200 rounded-xl text-xs font-bold min-h-[44px] flex items-center gap-1.5"
+                  >
+                    <Truck className="w-4 h-4 text-sky-600" />
+                    View Delivery
+                  </button>
+                ) : (
+                  <button
+                    onClick={async () => {
+                      await moveOrderForDelivery(selectedInvoice.orderId);
+                    }}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold min-h-[44px] flex items-center gap-1.5 shadow-xs"
+                  >
+                    <Truck className="w-4 h-4" />
+                    Move for Delivery
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {selectedInvoice.remainingBalance > 0 && (
+                  <button
+                    onClick={() => {
+                      setPayingInvoice(selectedInvoice);
+                      setPayAmount(selectedInvoice.remainingBalance);
+                    }}
+                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs min-h-[44px] flex items-center gap-1.5"
+                  >
+                    <DollarSign className="w-4 h-4" />
+                    Record Collection ({formatCurrency(selectedInvoice.remainingBalance)})
+                  </button>
+                )}
+
+                {isOwner && (
+                  <button
+                    onClick={() => setInvoiceToDelete(selectedInvoice)}
+                    className="px-3 py-2 text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-xl text-xs font-bold min-h-[44px] flex items-center gap-1.5"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </Modal>
@@ -302,13 +411,13 @@ export const InvoicesScreen: React.FC = () => {
           isOpen={true}
           onClose={() => setPayingInvoice(null)}
           title={`Collect Payment: ${payingInvoice.invoiceNumber}`}
-          subtitle={`Customer: ${payingInvoice.retailerName} • Remaining Due: $${payingInvoice.remainingBalance.toFixed(2)}`}
+          subtitle={`Customer: ${payingInvoice.retailerName} • Remaining Due: ${formatCurrency(payingInvoice.remainingBalance)}`}
           maxWidth="md"
         >
           <form onSubmit={handleConfirmPayment} className="space-y-4">
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                Payment Amount ($) *
+                Payment Amount (Rs.) *
               </label>
               <input
                 type="number"
@@ -335,7 +444,7 @@ export const InvoicesScreen: React.FC = () => {
                   <option value="CASH">Cash in Hand</option>
                   <option value="BANK_TRANSFER">Bank Transfer</option>
                   <option value="CHEQUE">Cheque</option>
-                  <option value="MOBILE_MONEY">Mobile Money</option>
+                  <option value="MOBILE_MONEY">Digital Wallet / QR</option>
                 </select>
               </div>
 
@@ -347,7 +456,7 @@ export const InvoicesScreen: React.FC = () => {
                   type="text"
                   value={payRef}
                   onChange={(e) => setPayRef(e.target.value)}
-                  placeholder="Receipt or cheque #"
+                  placeholder="Receipt, cheque, or txn #"
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs outline-none"
                 />
               </div>
@@ -359,7 +468,7 @@ export const InvoicesScreen: React.FC = () => {
                 type="text"
                 value={payNotes}
                 onChange={(e) => setPayNotes(e.target.value)}
-                placeholder="Collection memo..."
+                placeholder="Collection remarks..."
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs outline-none"
               />
             </div>
@@ -382,6 +491,30 @@ export const InvoicesScreen: React.FC = () => {
             </div>
           </form>
         </Modal>
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      {invoiceToDelete && (
+        <ConfirmDialog
+          isOpen={true}
+          onClose={() => setInvoiceToDelete(null)}
+          onConfirm={handleConfirmDelete}
+          title={`Delete Invoice ${invoiceToDelete.invoiceNumber}?`}
+          message={`Are you sure you want to delete invoice ${invoiceToDelete.invoiceNumber} for ${invoiceToDelete.retailerName} (${formatCurrency(invoiceToDelete.totalAmount)})? The associated order will be returned to approved status.`}
+          confirmText="Yes, Delete Invoice"
+          isLoading={isDeleting}
+        />
+      )}
+
+      {/* Invisible Printable Container for Clean Printing */}
+      {selectedInvoice && (
+        <div className="hidden print:block">
+          <PrintableInvoice
+            invoice={selectedInvoice}
+            items={invoiceItems}
+            retailer={selectedRetailerObj}
+          />
+        </div>
       )}
     </div>
   );

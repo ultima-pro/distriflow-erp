@@ -33,7 +33,6 @@ import {
 /**
  * In-memory development data source.
  * Strictly used when Supabase is not connected.
- * Preserves the seed records in memory during runtime without local storage hacks.
  */
 export class DevErpDataSource implements ErpDataSource {
   private users: User[] = [...INITIAL_DEMO_USERS];
@@ -76,7 +75,7 @@ export class DevErpDataSource implements ErpDataSource {
     const created: Retailer = {
       ...retailer,
       id: newId,
-      creditLimit: retailer.creditLimit ?? 5000,
+      creditLimit: retailer.creditLimit ?? 2500,
       outstandingBalance: retailer.outstandingBalance ?? 0,
       isActive: retailer.isActive ?? true,
       createdAt: Date.now(),
@@ -90,6 +89,10 @@ export class DevErpDataSource implements ErpDataSource {
     if (retailer) {
       retailer.outstandingBalance += delta;
     }
+  }
+
+  async deleteRetailer(id: number): Promise<void> {
+    this.retailers = this.retailers.filter((r) => r.id !== id);
   }
 
   // Suppliers
@@ -133,6 +136,10 @@ export class DevErpDataSource implements ErpDataSource {
     }
   }
 
+  async deleteSupplier(id: number): Promise<void> {
+    this.suppliers = this.suppliers.filter((s) => s.id !== id);
+  }
+
   // Products
   async getProducts(): Promise<Product[]> {
     return [...this.products];
@@ -159,8 +166,6 @@ export class DevErpDataSource implements ErpDataSource {
     const created: Product = {
       ...product,
       id: newId,
-      currentStock: product.currentStock ?? 0,
-      minStockLevel: product.minStockLevel ?? 10,
       isActive: product.isActive ?? true,
       createdAt: Date.now(),
     };
@@ -173,6 +178,10 @@ export class DevErpDataSource implements ErpDataSource {
     if (product) {
       product.currentStock += qtyDelta;
     }
+  }
+
+  async deleteProduct(id: number): Promise<void> {
+    this.products = this.products.filter((p) => p.id !== id);
   }
 
   // Orders
@@ -237,6 +246,11 @@ export class DevErpDataSource implements ErpDataSource {
     }
   }
 
+  async deleteOrder(id: number): Promise<void> {
+    this.orders = this.orders.filter((o) => o.id !== id);
+    this.orderItems = this.orderItems.filter((i) => i.orderId !== id);
+  }
+
   // Invoices
   async getInvoices(): Promise<Invoice[]> {
     return [...this.invoices].sort((a, b) => b.invoiceDate - a.invoiceDate);
@@ -255,22 +269,22 @@ export class DevErpDataSource implements ErpDataSource {
     items: Omit<InvoiceItem, 'id' | 'invoiceId'>[]
   ): Promise<Invoice> {
     const newId = Math.max(0, ...this.invoices.map((i) => i.id)) + 1;
-    const created: Invoice = {
+    const createdInvoice: Invoice = {
       ...invoice,
       id: newId,
       createdAt: Date.now(),
     };
-    this.invoices.unshift(created);
+    this.invoices.unshift(createdInvoice);
 
     let nextItemId = Math.max(0, ...this.invoiceItems.map((i) => i.id)) + 1;
-    const createdItems = items.map((it) => ({
+    const createdItems: InvoiceItem[] = items.map((it) => ({
       ...it,
       id: nextItemId++,
       invoiceId: newId,
     }));
     this.invoiceItems.push(...createdItems);
 
-    return created;
+    return createdInvoice;
   }
 
   async updateInvoicePayment(id: number, amount: number, status: InvoicePaymentStatus): Promise<void> {
@@ -280,6 +294,11 @@ export class DevErpDataSource implements ErpDataSource {
       invoice.remainingBalance = Math.max(0, invoice.remainingBalance - amount);
       invoice.paymentStatus = status;
     }
+  }
+
+  async deleteInvoice(id: number): Promise<void> {
+    this.invoices = this.invoices.filter((i) => i.id !== id);
+    this.invoiceItems = this.invoiceItems.filter((it) => it.invoiceId !== id);
   }
 
   // Purchases
@@ -292,22 +311,39 @@ export class DevErpDataSource implements ErpDataSource {
     items: Omit<PurchaseItem, 'id' | 'purchaseId'>[]
   ): Promise<Purchase> {
     const newId = Math.max(0, ...this.purchases.map((p) => p.id)) + 1;
-    const created: Purchase = {
+    const createdPurchase: Purchase = {
       ...purchase,
       id: newId,
       createdAt: Date.now(),
     };
-    this.purchases.unshift(created);
+    this.purchases.unshift(createdPurchase);
 
     let nextItemId = Math.max(0, ...this.purchaseItems.map((i) => i.id)) + 1;
-    const createdItems = items.map((it) => ({
+    const createdItems: PurchaseItem[] = items.map((it) => ({
       ...it,
       id: nextItemId++,
       purchaseId: newId,
     }));
     this.purchaseItems.push(...createdItems);
 
-    return created;
+    return createdPurchase;
+  }
+
+  async updatePurchasePayment(purchaseId: number, amount: number): Promise<void> {
+    const purchase = this.purchases.find((p) => p.id === purchaseId);
+    if (purchase) {
+      purchase.amountPaid += amount;
+      if (purchase.amountPaid >= purchase.totalAmount) {
+        purchase.paymentStatus = 'PAID';
+      } else if (purchase.amountPaid > 0) {
+        purchase.paymentStatus = 'PARTIALLY_PAID';
+      }
+    }
+  }
+
+  async deletePurchase(id: number): Promise<void> {
+    this.purchases = this.purchases.filter((p) => p.id !== id);
+    this.purchaseItems = this.purchaseItems.filter((i) => i.purchaseId !== id);
   }
 
   // Payments
@@ -326,7 +362,11 @@ export class DevErpDataSource implements ErpDataSource {
     return created;
   }
 
-  // Movements (Auditable)
+  async deletePayment(id: number): Promise<void> {
+    this.payments = this.payments.filter((p) => p.id !== id);
+  }
+
+  // Movements
   async getMovements(): Promise<InventoryMovement[]> {
     return [...this.movements].sort((a, b) => b.timestamp - a.timestamp);
   }
@@ -340,6 +380,10 @@ export class DevErpDataSource implements ErpDataSource {
     };
     this.movements.unshift(created);
     return created;
+  }
+
+  async deleteMovement(id: number): Promise<void> {
+    this.movements = this.movements.filter((m) => m.id !== id);
   }
 
   // Deliveries
@@ -372,6 +416,10 @@ export class DevErpDataSource implements ErpDataSource {
     }
   }
 
+  async deleteDelivery(id: number): Promise<void> {
+    this.deliveries = this.deliveries.filter((d) => d.id !== id);
+  }
+
   // Users
   async getUsers(): Promise<User[]> {
     return [...this.users];
@@ -397,10 +445,15 @@ export class DevErpDataSource implements ErpDataSource {
     const created: User = {
       ...user,
       id: newId,
+      cloudId: `user-${newId}`,
       isActive: user.isActive ?? true,
       createdAt: Date.now(),
     };
     this.users.push(created);
     return created;
+  }
+
+  async deleteUser(id: number): Promise<void> {
+    this.users = this.users.filter((u) => u.id !== id);
   }
 }

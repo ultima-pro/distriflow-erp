@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useErp } from '../../context/ErpContext';
+import { formatCurrency } from '../../lib/format';
 import {
   BarChart3,
   TrendingUp,
@@ -128,7 +129,7 @@ export const ReportsScreen: React.FC = () => {
                     <td className="py-3.5 px-4 text-slate-600">{d.retailersCount} stores</td>
                     <td className="py-3.5 px-4 text-center font-bold">{d.ordersCount}</td>
                     <td className="py-3.5 px-4 text-right font-black text-blue-700 text-base">
-                      ${d.revenue.toFixed(2)}
+                      {formatCurrency(d.revenue)}
                     </td>
                   </tr>
                 ))}
@@ -164,10 +165,10 @@ export const ReportsScreen: React.FC = () => {
                     <td className="py-3.5 px-4 text-slate-500">{d.retailer.contactPerson}</td>
                     <td className="py-3.5 px-4 text-center font-bold">{d.ordersCount}</td>
                     <td className="py-3.5 px-4 text-right font-bold text-amber-700">
-                      ${d.outstanding.toFixed(2)}
+                      {formatCurrency(d.outstanding)}
                     </td>
                     <td className="py-3.5 px-4 text-right font-black text-slate-900">
-                      ${d.revenue.toFixed(2)}
+                      {formatCurrency(d.revenue)}
                     </td>
                   </tr>
                 ))}
@@ -196,17 +197,17 @@ export const ReportsScreen: React.FC = () => {
           <div className="space-y-3 max-w-xl text-sm">
             <div className="flex justify-between py-2 border-b border-slate-100">
               <span className="font-semibold text-slate-700">Total Invoiced Sales Revenue:</span>
-              <span className="font-black text-slate-900">${totalInvoicedSales.toFixed(2)}</span>
+              <span className="font-black text-slate-900">{formatCurrency(totalInvoicedSales)}</span>
             </div>
 
             <div className="flex justify-between py-2 border-b border-slate-100 text-slate-600">
               <span>Cost of Goods Sold (Suppliers):</span>
-              <span className="font-bold">-${estimatedCost.toFixed(2)}</span>
+              <span className="font-bold">-{formatCurrency(estimatedCost)}</span>
             </div>
 
             <div className="flex justify-between py-3 border-b-2 border-slate-300 text-base font-black text-emerald-700">
               <span>Gross Profit Margin:</span>
-              <span>+${grossProfit.toFixed(2)}</span>
+              <span>+{formatCurrency(grossProfit)}</span>
             </div>
 
             <div className="flex justify-between py-1 text-xs text-slate-500">

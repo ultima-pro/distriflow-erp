@@ -1,23 +1,21 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useErp } from '../../context/ErpContext';
-import { Payment, PaymentType, PaymentMethod } from '../../types/erp';
+import { Payment, PaymentMethod } from '../../types/erp';
 import { Modal } from '../common/Modal';
+import { ConfirmDialog } from '../common/ConfirmDialog';
+import { formatCurrency } from '../../lib/format';
 import {
   DollarSign,
   Search,
   Plus,
   ArrowUpRight,
   ArrowDownLeft,
-  Calendar,
-  CreditCard,
-  Building,
-  User,
-  CheckCircle,
+  Trash2,
 } from 'lucide-react';
 
 export const PaymentsScreen: React.FC = () => {
-  const { isOwner, currentUser } = useAuth();
+  const { isOwner } = useAuth();
   const {
     payments,
     retailers,
@@ -25,6 +23,7 @@ export const PaymentsScreen: React.FC = () => {
     invoices,
     recordRetailerPayment,
     recordSupplierPayment,
+    deletePayment,
   } = useErp();
 
   const [search, setSearch] = useState('');
@@ -46,6 +45,10 @@ export const PaymentsScreen: React.FC = () => {
   const [disburseMethod, setDisburseMethod] = useState<PaymentMethod>('BANK_TRANSFER');
   const [disburseRef, setDisburseRef] = useState('');
   const [disburseNotes, setDisburseNotes] = useState('');
+
+  // Delete Payment Confirmation
+  const [paymentToDelete, setPaymentToDelete] = useState<Payment | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const filtered = payments.filter((p) => {
     const matchesSearch =
@@ -96,6 +99,17 @@ export const PaymentsScreen: React.FC = () => {
     setDisburseAmount(0);
     setDisburseRef('');
     setDisburseNotes('');
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!paymentToDelete) return;
+    try {
+      setIsDeleting(true);
+      await deletePayment(paymentToDelete.id);
+      setPaymentToDelete(null);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   // Filter invoices for chosen retailer
@@ -164,7 +178,7 @@ export const PaymentsScreen: React.FC = () => {
           className="w-full sm:w-auto bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs sm:text-sm font-medium text-slate-700 outline-none"
         >
           <option value="ALL">All Payment Types</option>
-          <option value="RETAINER_COLLECTION">Retailer Collections (Inflow)</option>
+          <option value="RETAILER_COLLECTION">Retailer Collections (Inflow)</option>
           <option value="SUPPLIER_PAYMENT">Supplier Disbursements (Outflow)</option>
         </select>
       </div>
@@ -183,6 +197,7 @@ export const PaymentsScreen: React.FC = () => {
                 <th className="py-3 px-4">Reference</th>
                 <th className="py-3 px-4">Recorded By</th>
                 <th className="py-3 px-4 text-right">Amount</th>
+                {isOwner && <th className="py-3 px-4 text-center">Action</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
@@ -228,9 +243,20 @@ export const PaymentsScreen: React.FC = () => {
                           isInflow ? 'text-emerald-700' : 'text-slate-900'
                         }`}
                       >
-                        {isInflow ? '+' : '-'}${pay.amount.toFixed(2)}
+                        {isInflow ? '+' : '-'}{formatCurrency(pay.amount)}
                       </span>
                     </td>
+                    {isOwner && (
+                      <td className="py-3.5 px-4 text-center">
+                        <button
+                          onClick={() => setPaymentToDelete(pay)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg min-h-[36px] min-w-[36px]"
+                          title="Delete Payment Record"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -266,7 +292,7 @@ export const PaymentsScreen: React.FC = () => {
               >
                 {retailers.map((r) => (
                   <option key={r.id} value={r.id}>
-                    {r.name} (Balance: ${r.outstandingBalance.toFixed(2)})
+                    {r.name} (Balance: {formatCurrency(r.outstandingBalance)})
                   </option>
                 ))}
               </select>
@@ -292,7 +318,7 @@ export const PaymentsScreen: React.FC = () => {
                   <option value="">General Account Balance</option>
                   {retailerUnpaidInvoices.map((inv) => (
                     <option key={inv.id} value={inv.id}>
-                      {inv.invoiceNumber} - Due: ${inv.remainingBalance.toFixed(2)}
+                      {inv.invoiceNumber} - Due: {formatCurrency(inv.remainingBalance)}
                     </option>
                   ))}
                 </select>
@@ -301,7 +327,7 @@ export const PaymentsScreen: React.FC = () => {
 
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                Collected Amount ($) *
+                Collected Amount (Rs.) *
               </label>
               <input
                 type="number"
@@ -327,7 +353,7 @@ export const PaymentsScreen: React.FC = () => {
                   <option value="CASH">Cash in Hand</option>
                   <option value="BANK_TRANSFER">Bank Transfer</option>
                   <option value="CHEQUE">Cheque</option>
-                  <option value="MOBILE_MONEY">Mobile Money</option>
+                  <option value="MOBILE_MONEY">Digital Wallet / QR</option>
                 </select>
               </div>
 
@@ -339,7 +365,7 @@ export const PaymentsScreen: React.FC = () => {
                   type="text"
                   value={collectRef}
                   onChange={(e) => setCollectRef(e.target.value)}
-                  placeholder="Receipt # or Cheque #"
+                  placeholder="Receipt # or Txn #"
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs outline-none"
                 />
               </div>
@@ -403,7 +429,7 @@ export const PaymentsScreen: React.FC = () => {
               >
                 {suppliers.map((s) => (
                   <option key={s.id} value={s.id}>
-                    {s.name} (Payable: ${s.payableBalance.toFixed(2)})
+                    {s.name} (Payable: {formatCurrency(s.payableBalance)})
                   </option>
                 ))}
               </select>
@@ -411,7 +437,7 @@ export const PaymentsScreen: React.FC = () => {
 
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                Disbursement Amount ($) *
+                Disbursement Amount (Rs.) *
               </label>
               <input
                 type="number"
@@ -434,7 +460,7 @@ export const PaymentsScreen: React.FC = () => {
                   onChange={(e) => setDisburseMethod(e.target.value as any)}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs outline-none bg-white font-semibold"
                 >
-                  <option value="BANK_TRANSFER">Bank Wire</option>
+                  <option value="BANK_TRANSFER">Bank Wire / Transfer</option>
                   <option value="CHEQUE">Cheque</option>
                   <option value="CASH">Cash</option>
                 </select>
@@ -452,6 +478,17 @@ export const PaymentsScreen: React.FC = () => {
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs outline-none"
                 />
               </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Notes</label>
+              <input
+                type="text"
+                value={disburseNotes}
+                onChange={(e) => setDisburseNotes(e.target.value)}
+                placeholder="Payment memo..."
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs outline-none"
+              />
             </div>
 
             <div className="pt-3 border-t border-slate-200 flex justify-end gap-2">
@@ -472,6 +509,19 @@ export const PaymentsScreen: React.FC = () => {
             </div>
           </form>
         </Modal>
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      {paymentToDelete && (
+        <ConfirmDialog
+          isOpen={true}
+          onClose={() => setPaymentToDelete(null)}
+          onConfirm={handleConfirmDelete}
+          title={`Delete Payment ${paymentToDelete.paymentNumber}?`}
+          message={`Are you sure you want to delete this payment record of ${formatCurrency(paymentToDelete.amount)} for ${paymentToDelete.entityName}? The party balance will be restored.`}
+          confirmText="Yes, Delete Payment"
+          isLoading={isDeleting}
+        />
       )}
     </div>
   );

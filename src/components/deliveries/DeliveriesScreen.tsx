@@ -4,6 +4,7 @@ import { useErp } from '../../context/ErpContext';
 import { Delivery } from '../../types/erp';
 import { StatusBadge } from '../common/Badge';
 import { Modal } from '../common/Modal';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 import {
   Truck,
   Search,
@@ -15,11 +16,12 @@ import {
   ArrowRight,
   Boxes,
   FileText,
+  Trash2,
 } from 'lucide-react';
 
 export const DeliveriesScreen: React.FC = () => {
   const { isOwner } = useAuth();
-  const { deliveries, dispatchDelivery, completeDelivery } = useErp();
+  const { deliveries, dispatchDelivery, completeDelivery, deleteDelivery } = useErp();
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -33,6 +35,10 @@ export const DeliveriesScreen: React.FC = () => {
   // Complete Delivery Modal
   const [completingDelivery, setCompletingDelivery] = useState<Delivery | null>(null);
   const [completeNotes, setCompleteNotes] = useState('Signed by store manager on delivery dock');
+
+  // Delete Delivery Modal
+  const [deliveryToDelete, setDeliveryToDelete] = useState<Delivery | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const filtered = deliveries.filter((d) => {
     const matchesSearch =
@@ -57,6 +63,17 @@ export const DeliveriesScreen: React.FC = () => {
 
     await completeDelivery(completingDelivery.id, completeNotes);
     setCompletingDelivery(null);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deliveryToDelete) return;
+    try {
+      setIsDeleting(true);
+      await deleteDelivery(deliveryToDelete.id);
+      setDeliveryToDelete(null);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   return (
@@ -146,30 +163,42 @@ export const DeliveriesScreen: React.FC = () => {
 
             {/* Actions */}
             <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-              {d.status === 'SCHEDULED' && isOwner && (
-                <button
-                  onClick={() => setDispatchingDelivery(d)}
-                  className="w-full py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 min-h-[40px]"
-                >
-                  <Truck className="w-4 h-4" />
-                  <span>Assign Driver & Dispatch</span>
-                </button>
-              )}
+              <div className="flex-1">
+                {d.status === 'SCHEDULED' && isOwner && (
+                  <button
+                    onClick={() => setDispatchingDelivery(d)}
+                    className="w-full py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 min-h-[40px]"
+                  >
+                    <Truck className="w-4 h-4" />
+                    <span>Assign Driver & Dispatch</span>
+                  </button>
+                )}
 
-              {d.status === 'DISPATCHED' && isOwner && (
-                <button
-                  onClick={() => setCompletingDelivery(d)}
-                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 min-h-[40px]"
-                >
-                  <CheckCircle className="w-4 h-4" />
-                  <span>Confirm Handover & Deduct Stock</span>
-                </button>
-              )}
+                {d.status === 'DISPATCHED' && isOwner && (
+                  <button
+                    onClick={() => setCompletingDelivery(d)}
+                    className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 min-h-[40px]"
+                  >
+                    <CheckCircle className="w-4 h-4" />
+                    <span>Confirm Handover & Deduct Stock</span>
+                  </button>
+                )}
 
-              {d.status === 'DELIVERED' && (
-                <div className="text-xs text-slate-400 font-medium py-1">
-                  Fulfilled & Inventory Deducted
-                </div>
+                {d.status === 'DELIVERED' && (
+                  <div className="text-xs text-slate-400 font-medium py-1">
+                    Fulfilled & Inventory Deducted
+                  </div>
+                )}
+              </div>
+
+              {isOwner && (
+                <button
+                  onClick={() => setDeliveryToDelete(d)}
+                  className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl min-h-[40px] min-w-[40px] flex items-center justify-center border border-slate-200"
+                  title="Delete Delivery Record"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               )}
             </div>
           </div>
@@ -293,6 +322,19 @@ export const DeliveriesScreen: React.FC = () => {
             </div>
           </form>
         </Modal>
+      )}
+
+      {/* Delete Delivery Confirmation */}
+      {deliveryToDelete && (
+        <ConfirmDialog
+          isOpen={true}
+          onClose={() => setDeliveryToDelete(null)}
+          onConfirm={handleConfirmDelete}
+          title={`Delete Delivery for ${deliveryToDelete.orderNumber}?`}
+          message={`Are you sure you want to delete the delivery record for ${deliveryToDelete.retailerName} (${deliveryToDelete.orderNumber})? This will remove the scheduled shipment.`}
+          confirmText="Yes, Delete Delivery"
+          isLoading={isDeleting}
+        />
       )}
     </div>
   );

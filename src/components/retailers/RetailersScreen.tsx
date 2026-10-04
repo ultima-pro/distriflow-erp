@@ -3,21 +3,18 @@ import { useAuth } from '../../context/AuthContext';
 import { useErp } from '../../context/ErpContext';
 import { Retailer } from '../../types/erp';
 import { Modal } from '../common/Modal';
+import { ConfirmDialog } from '../common/ConfirmDialog';
+import { formatCurrency } from '../../lib/format';
 import {
   Search,
   Plus,
   Store,
   Phone,
-  Mail,
   MapPin,
-  CreditCard,
   ShoppingCart,
-  DollarSign,
   UserCheck,
   Edit2,
-  Power,
-  Eye,
-  Building,
+  Trash2,
 } from 'lucide-react';
 
 export const RetailersScreen: React.FC = () => {
@@ -25,12 +22,9 @@ export const RetailersScreen: React.FC = () => {
   const {
     retailers,
     users,
-    orders,
-    invoices,
-    payments,
     saveRetailer,
+    deleteRetailer,
     startNewOrderForRetailer,
-    setActiveTab,
   } = useErp();
 
   const [search, setSearch] = useState('');
@@ -39,6 +33,10 @@ export const RetailersScreen: React.FC = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [editingRetailer, setEditingRetailer] = useState<Partial<Retailer> | null>(null);
 
+  // Delete Confirmation
+  const [retailerToDelete, setRetailerToDelete] = useState<Retailer | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   // Salespersons list for assignment
   const salespersons = users.filter((u) => u.role === 'SALESPERSON');
 
@@ -46,7 +44,10 @@ export const RetailersScreen: React.FC = () => {
   const accessibleRetailers = isOwner
     ? retailers
     : retailers.filter(
-        (r) => r.assignedSalespersonId === currentUser?.cloudId || !r.assignedSalespersonId
+        (r) =>
+          r.assignedSalespersonId === currentUser?.cloudId ||
+          r.assignedSalespersonId === currentUser?.id ||
+          !r.assignedSalespersonId
       );
 
   const filtered = accessibleRetailers.filter((r) => {
@@ -67,9 +68,9 @@ export const RetailersScreen: React.FC = () => {
       email: '',
       address: '',
       city: '',
-      creditLimit: 2500,
+      creditLimit: 50000,
       outstandingBalance: 0,
-      assignedSalespersonId: currentUser?.role === 'SALESPERSON' ? currentUser.cloudId : null,
+      assignedSalespersonId: currentUser?.role === 'SALESPERSON' ? currentUser.cloudId || currentUser.id : null,
       isActive: true,
     });
     setIsEditing(true);
@@ -102,23 +103,16 @@ export const RetailersScreen: React.FC = () => {
     setEditingRetailer(null);
   };
 
-  const handleToggleActive = async (r: Retailer) => {
-    await saveRetailer({
-      ...r,
-      isActive: !r.isActive,
-    });
+  const handleConfirmDelete = async () => {
+    if (!retailerToDelete) return;
+    try {
+      setIsDeleting(true);
+      await deleteRetailer(retailerToDelete.id);
+      setRetailerToDelete(null);
+    } finally {
+      setIsDeleting(false);
+    }
   };
-
-  // Associated history for selected retailer
-  const retailerOrders = selectedRetailer
-    ? orders.filter((o) => o.retailerId === selectedRetailer.id)
-    : [];
-  const retailerInvoices = selectedRetailer
-    ? invoices.filter((i) => i.retailerId === selectedRetailer.id)
-    : [];
-  const retailerPayments = selectedRetailer
-    ? payments.filter((p) => p.entityId === selectedRetailer.id && p.type === 'RETAILER_COLLECTION')
-    : [];
 
   return (
     <div className="space-y-6">
@@ -129,7 +123,7 @@ export const RetailersScreen: React.FC = () => {
             Retailers & Customers
           </h2>
           <p className="text-xs sm:text-sm text-slate-500">
-            Client accounts, credit limits, balances, and field order history
+            Client accounts, credit limits, balances, and field order creation
           </p>
         </div>
 
@@ -163,7 +157,7 @@ export const RetailersScreen: React.FC = () => {
           >
             <option value="ALL">All Sales Representatives</option>
             {salespersons.map((s) => (
-              <option key={s.cloudId} value={s.cloudId}>
+              <option key={s.cloudId || s.id} value={(s.cloudId || s.id).toString()}>
                 {s.fullName}
               </option>
             ))}
@@ -175,13 +169,12 @@ export const RetailersScreen: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filtered.map((r) => {
           const assignedRep = salespersons.find(
-            (s) => s.cloudId === r.assignedSalespersonId
+            (s) => s.cloudId === r.assignedSalespersonId || s.id === r.assignedSalespersonId
           );
           return (
             <div
               key={r.id}
-              onClick={() => setSelectedRetailer(r)}
-              className={`p-5 rounded-2xl border bg-white shadow-xs hover:border-blue-400 cursor-pointer transition-all flex flex-col justify-between ${
+              className={`p-5 rounded-2xl border bg-white shadow-xs hover:border-blue-400 transition-all flex flex-col justify-between ${
                 !r.isActive ? 'opacity-60 bg-slate-50' : ''
               }`}
             >
@@ -232,7 +225,7 @@ export const RetailersScreen: React.FC = () => {
                         r.outstandingBalance > 0 ? 'text-amber-700' : 'text-slate-800'
                       }`}
                     >
-                      ${r.outstandingBalance.toFixed(2)}
+                      {formatCurrency(r.outstandingBalance)}
                     </span>
                   </div>
                   <div className="text-right">
@@ -240,12 +233,12 @@ export const RetailersScreen: React.FC = () => {
                       Credit Limit
                     </span>
                     <span className="text-xs font-semibold text-slate-600">
-                      ${r.creditLimit.toFixed(2)}
+                      {formatCurrency(r.creditLimit)}
                     </span>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center gap-2">
                   <button
                     onClick={() => startNewOrderForRetailer(r)}
                     className="flex-1 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors min-h-[36px]"
@@ -261,6 +254,16 @@ export const RetailersScreen: React.FC = () => {
                   >
                     <Edit2 className="w-3.5 h-3.5" />
                   </button>
+
+                  {isOwner && (
+                    <button
+                      onClick={() => setRetailerToDelete(r)}
+                      className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl min-h-[36px] min-w-[36px] flex items-center justify-center"
+                      title="Delete Retailer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -361,15 +364,15 @@ export const RetailersScreen: React.FC = () => {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                  Credit Limit ($)
+                  Credit Limit (Rs.)
                 </label>
                 <input
                   type="number"
                   min="0"
                   step="100"
-                  value={editingRetailer.creditLimit ?? 2500}
+                  value={editingRetailer.creditLimit ?? 25000}
                   onChange={(e) => setEditingRetailer({ ...editingRetailer, creditLimit: parseFloat(e.target.value) || 0 })}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm outline-none focus:border-blue-500"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm outline-none focus:border-blue-500 font-semibold"
                 />
               </div>
 
@@ -384,7 +387,7 @@ export const RetailersScreen: React.FC = () => {
                 >
                   <option value="">-- Unassigned --</option>
                   {salespersons.map((s) => (
-                    <option key={s.cloudId} value={s.cloudId}>
+                    <option key={s.cloudId || s.id} value={s.cloudId || s.id}>
                       {s.fullName}
                     </option>
                   ))}
@@ -399,19 +402,32 @@ export const RetailersScreen: React.FC = () => {
                   setIsEditing(false);
                   setEditingRetailer(null);
                 }}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs"
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs min-h-[40px]"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-md shadow-blue-500/20"
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-md shadow-blue-500/20 min-h-[40px]"
               >
                 Save Retailer
               </button>
             </div>
           </form>
         </Modal>
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      {retailerToDelete && (
+        <ConfirmDialog
+          isOpen={true}
+          onClose={() => setRetailerToDelete(null)}
+          onConfirm={handleConfirmDelete}
+          title={`Delete Retailer ${retailerToDelete.name}?`}
+          message={`Are you sure you want to delete ${retailerToDelete.name}? This will remove the retailer from your customer list.`}
+          confirmText="Yes, Delete Retailer"
+          isLoading={isDeleting}
+        />
       )}
     </div>
   );

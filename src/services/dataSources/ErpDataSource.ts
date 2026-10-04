@@ -27,18 +27,21 @@ export interface ErpDataSource {
   getRetailerById(id: number): Promise<Retailer | null>;
   saveRetailer(retailer: Omit<Retailer, 'id' | 'createdAt'> & { id?: number }): Promise<Retailer>;
   updateRetailerBalance(id: number, delta: number): Promise<void>;
+  deleteRetailer(id: number): Promise<void>;
 
   // Suppliers
   getSuppliers(): Promise<Supplier[]>;
   getSupplierById(id: number): Promise<Supplier | null>;
   saveSupplier(supplier: Omit<Supplier, 'id' | 'createdAt'> & { id?: number }): Promise<Supplier>;
   updateSupplierBalance(id: number, delta: number): Promise<void>;
+  deleteSupplier(id: number): Promise<void>;
 
   // Products
   getProducts(): Promise<Product[]>;
   getProductById(id: number): Promise<Product | null>;
   saveProduct(product: Omit<Product, 'id' | 'createdAt'> & { id?: number }): Promise<Product>;
   updateProductStock(id: number, qtyDelta: number): Promise<void>;
+  deleteProduct(id: number): Promise<void>;
 
   // Orders & Items
   getOrders(): Promise<Order[]>;
@@ -49,6 +52,7 @@ export interface ErpDataSource {
     items: Omit<OrderItem, 'id' | 'orderId'>[]
   ): Promise<Order>;
   updateOrderStatus(orderId: number, status: OrderStatus, feedback?: string): Promise<void>;
+  deleteOrder(id: number): Promise<void>;
 
   // Invoices & Items
   getInvoices(): Promise<Invoice[]>;
@@ -59,6 +63,7 @@ export interface ErpDataSource {
     items: Omit<InvoiceItem, 'id' | 'invoiceId'>[]
   ): Promise<Invoice>;
   updateInvoicePayment(id: number, amount: number, status: InvoicePaymentStatus): Promise<void>;
+  deleteInvoice(id: number): Promise<void>;
 
   // Purchases & Items
   getPurchases(): Promise<Purchase[]>;
@@ -66,22 +71,28 @@ export interface ErpDataSource {
     purchase: Omit<Purchase, 'id' | 'createdAt'>,
     items: Omit<PurchaseItem, 'id' | 'purchaseId'>[]
   ): Promise<Purchase>;
+  updatePurchasePayment(purchaseId: number, amount: number): Promise<void>;
+  deletePurchase(id: number): Promise<void>;
 
   // Payments
   getPayments(): Promise<Payment[]>;
   createPayment(payment: Omit<Payment, 'id' | 'createdAt'>): Promise<Payment>;
+  deletePayment(id: number): Promise<void>;
 
   // Inventory Movements (Audit Trail)
   getMovements(): Promise<InventoryMovement[]>;
   createMovement(movement: Omit<InventoryMovement, 'id' | 'timestamp'>): Promise<InventoryMovement>;
+  deleteMovement(id: number): Promise<void>;
 
   // Deliveries
   getDeliveries(): Promise<Delivery[]>;
   createDelivery(delivery: Omit<Delivery, 'id' | 'createdAt'>): Promise<Delivery>;
   updateDeliveryStatus(id: number, status: DeliveryStatus, deliveredDate?: number, notes?: string): Promise<void>;
+  deleteDelivery(id: number): Promise<void>;
 
   // Users Directory
   getUsers(): Promise<User[]>;
   getUserById(id: number): Promise<User | null>;
   saveUser(user: Omit<User, 'id' | 'createdAt'> & { id?: number }): Promise<User>;
+  deleteUser(id: number): Promise<void>;
 }

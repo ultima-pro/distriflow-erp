@@ -14,11 +14,11 @@ import {
   PlusCircle,
   Building2,
   Calendar,
-  Sparkles,
   BarChart2,
   ArrowRight,
 } from 'lucide-react';
 import { StatusBadge } from '../common/Badge';
+import { formatCurrency, formatCurrencyCompact } from '../../lib/format';
 
 export const DashboardScreen: React.FC = () => {
   const { isOwner, currentUser } = useAuth();
@@ -45,12 +45,16 @@ export const DashboardScreen: React.FC = () => {
   // Filter orders by salesperson if not owner
   const accessibleOrders = isOwner
     ? orders
-    : orders.filter((o) => o.salespersonId === currentUser?.cloudId);
+    : orders.filter((o) => o.salespersonId === currentUser?.cloudId || o.salespersonId === currentUser?.id);
 
-  const todayOrders = accessibleOrders.filter((o) => o.orderDate >= startOfToday && o.status !== 'CANCELLED' && o.status !== 'REJECTED');
+  const todayOrders = accessibleOrders.filter(
+    (o) => o.orderDate >= startOfToday && o.status !== 'CANCELLED' && o.status !== 'REJECTED'
+  );
   const todaySales = todayOrders.reduce((sum, o) => sum + o.totalAmount, 0);
 
-  const monthOrders = accessibleOrders.filter((o) => o.orderDate >= startOfMonth && o.status !== 'CANCELLED' && o.status !== 'REJECTED');
+  const monthOrders = accessibleOrders.filter(
+    (o) => o.orderDate >= startOfMonth && o.status !== 'CANCELLED' && o.status !== 'REJECTED'
+  );
   const monthSales = monthOrders.reduce((sum, o) => sum + o.totalAmount, 0);
 
   // Receivables
@@ -110,7 +114,7 @@ export const DashboardScreen: React.FC = () => {
               className="bg-white/10 hover:bg-white/20 text-white border border-white/20 font-bold px-4 py-2.5 rounded-xl text-xs sm:text-sm flex items-center gap-2 active:scale-95 transition-all min-h-[44px]"
             >
               <DollarSign className="w-4 h-4 text-emerald-400" />
-              <span>{isOwner ? 'Ledger' : 'Collect Payment'}</span>
+              <span>{isOwner ? 'Financial Ledger' : 'Collect Payment'}</span>
             </button>
           </div>
         </div>
@@ -127,7 +131,7 @@ export const DashboardScreen: React.FC = () => {
             </div>
           </div>
           <p className="text-xl sm:text-2xl font-black text-slate-900 mt-2">
-            ${todaySales.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {formatCurrency(todaySales)}
           </p>
           <p className="text-[11px] text-slate-500 mt-1 font-medium flex items-center gap-1">
             <span className="text-emerald-600 font-bold">{todayOrders.length} orders</span> submitted today
@@ -143,7 +147,7 @@ export const DashboardScreen: React.FC = () => {
             </div>
           </div>
           <p className="text-xl sm:text-2xl font-black text-slate-900 mt-2">
-            ${monthSales.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {formatCurrency(monthSales)}
           </p>
           <p className="text-[11px] text-slate-500 mt-1 font-medium">
             {monthOrders.length} orders this month
@@ -159,10 +163,10 @@ export const DashboardScreen: React.FC = () => {
             </div>
           </div>
           <p className="text-xl sm:text-2xl font-black text-slate-900 mt-2">
-            ${totalReceivables.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {formatCurrency(totalReceivables)}
           </p>
           <p className="text-[11px] text-amber-600 font-semibold mt-1 flex items-center gap-1">
-            {overdueReceivables > 0 && <span>${overdueReceivables.toFixed(0)} overdue</span>}
+            {overdueReceivables > 0 && <span>{formatCurrencyCompact(overdueReceivables)} overdue</span>}
           </p>
         </div>
 
@@ -176,7 +180,7 @@ export const DashboardScreen: React.FC = () => {
               </div>
             </div>
             <p className="text-xl sm:text-2xl font-black text-slate-900 mt-2">
-              ${totalPayables.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatCurrency(totalPayables)}
             </p>
             <p className="text-[11px] text-slate-500 mt-1 font-medium">
               {suppliers.length} active suppliers
@@ -191,10 +195,10 @@ export const DashboardScreen: React.FC = () => {
               </div>
             </div>
             <p className="text-xl sm:text-2xl font-black text-slate-900 mt-2">
-              {retailers.filter((r) => r.assignedSalespersonId === currentUser?.id).length}
+              {retailers.filter((r) => r.assignedSalespersonId === currentUser?.cloudId || r.assignedSalespersonId === currentUser?.id).length}
             </p>
             <p className="text-[11px] text-slate-500 mt-1 font-medium">
-              Assigned retail territories
+              Assigned retail accounts
             </p>
           </div>
         )}
@@ -209,7 +213,7 @@ export const DashboardScreen: React.FC = () => {
               <span className="text-xs font-bold">Inventory Value</span>
             </div>
             <p className="text-lg font-bold text-slate-900 mt-1">
-              ${inventoryValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatCurrency(inventoryValue)}
             </p>
           </div>
 
@@ -249,7 +253,7 @@ export const DashboardScreen: React.FC = () => {
           >
             <div className="flex items-center gap-2">
               <Truck className="w-4 h-4 text-sky-600" />
-              <span className="text-xs font-bold">Active Deliveries</span>
+              <span className="text-xs font-bold">In Logistics</span>
             </div>
             <p className="text-lg font-bold mt-1">
               {pendingDeliveries.length} Shipments
@@ -258,44 +262,39 @@ export const DashboardScreen: React.FC = () => {
         </div>
       )}
 
-      {/* Main Two-Column Layout */}
+      {/* Main Grid: Pending Approval Orders + Side Widgets */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column (2 Cols): Pending Approval Orders & Quick Action Queues */}
+        {/* Left Column: Recent Orders Pending Review */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Pending Salesperson Orders (Priority for Owner) */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs">
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-amber-600" />
-                  {isOwner ? 'Orders Pending Owner Approval' : 'My Recent Submitted Orders'}
+                <h3 className="font-bold text-base text-slate-900">
+                  {isOwner ? 'Recent Orders Pending Approval' : 'My Recent Orders'}
                 </h3>
                 <p className="text-xs text-slate-500">
-                  {isOwner
-                    ? 'Review salesperson submitted orders and approve, reject, or request changes'
-                    : 'Track your submitted orders through the approval and delivery workflow'}
+                  {isOwner ? 'Verify stock quantities and approve for dispatch' : 'Live status of submitted customer orders'}
                 </p>
               </div>
               <button
                 onClick={() => setActiveTab('orders')}
-                className="text-xs text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1"
+                className="text-xs text-blue-600 font-bold hover:underline flex items-center gap-1"
               >
-                View All <ArrowRight className="w-3.5 h-3.5" />
+                <span>View All</span>
+                <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </div>
 
-            {pendingOrders.length === 0 ? (
-              <div className="text-center py-8 text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                <CheckCircle className="w-8 h-8 text-emerald-500 mx-auto mb-2 opacity-80" />
-                <p className="text-sm font-medium text-slate-700">All submitted orders are up to date!</p>
-                <p className="text-xs text-slate-400 mt-0.5">No pending reviews required right now.</p>
+            {accessibleOrders.slice(0, 5).length === 0 ? (
+              <div className="text-center py-8 text-slate-400 text-xs">
+                No orders submitted yet.
               </div>
             ) : (
-              <div className="space-y-3">
-                {pendingOrders.slice(0, 4).map((order) => (
+              <div className="divide-y divide-slate-100">
+                {accessibleOrders.slice(0, 5).map((order) => (
                   <div
                     key={order.id}
-                    className="p-4 rounded-xl border border-slate-200 hover:border-blue-300 transition-all bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                    className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/50 rounded-xl px-2 transition-colors"
                   >
                     <div>
                       <div className="flex items-center gap-2">
@@ -313,27 +312,37 @@ export const DashboardScreen: React.FC = () => {
                     <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200">
                       <div className="text-right">
                         <span className="text-sm font-black text-slate-900 block">
-                          ${order.totalAmount.toFixed(2)}
+                          {formatCurrency(order.totalAmount)}
                         </span>
                         <span className="text-[10px] text-slate-400">Total</span>
                       </div>
 
                       {isOwner ? (
                         <div className="flex items-center gap-1.5">
+                          {order.status === 'SUBMITTED' && (
+                            <>
+                              <button
+                                onClick={() => approveOrder(order.id)}
+                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs min-h-[36px]"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const reason = prompt('Reason for rejection:');
+                                  if (reason) rejectOrder(order.id, reason);
+                                }}
+                                className="px-2.5 py-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-lg text-xs font-bold border border-rose-200 min-h-[36px]"
+                              >
+                                Reject
+                              </button>
+                            </>
+                          )}
                           <button
-                            onClick={() => approveOrder(order.id)}
-                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs min-h-[36px]"
+                            onClick={() => setActiveTab('orders')}
+                            className="px-2.5 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-200"
                           >
-                            Approve
-                          </button>
-                          <button
-                            onClick={() => {
-                              const reason = prompt('Reason for rejection:');
-                              if (reason) rejectOrder(order.id, reason);
-                            }}
-                            className="px-2.5 py-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-lg text-xs font-bold border border-rose-200 min-h-[36px]"
-                          >
-                            Reject
+                            Details
                           </button>
                         </div>
                       ) : (
@@ -365,17 +374,17 @@ export const DashboardScreen: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
                 <div className="bg-blue-50/70 p-3.5 rounded-xl border border-blue-100">
                   <span className="text-[11px] font-bold text-blue-700 uppercase">Gross Revenue</span>
-                  <p className="text-lg font-black text-blue-950 mt-0.5">${totalInvoicedSales.toFixed(2)}</p>
+                  <p className="text-lg font-black text-blue-950 mt-0.5">{formatCurrency(totalInvoicedSales)}</p>
                   <span className="text-[10px] text-blue-600">From invoiced shipments</span>
                 </div>
                 <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
                   <span className="text-[11px] font-bold text-slate-600 uppercase">COGS (Purchase Cost)</span>
-                  <p className="text-lg font-black text-slate-900 mt-0.5">${estimatedCogs.toFixed(2)}</p>
+                  <p className="text-lg font-black text-slate-900 mt-0.5">{formatCurrency(estimatedCogs)}</p>
                   <span className="text-[10px] text-slate-500">Supplier inventory cost</span>
                 </div>
                 <div className="bg-emerald-50/70 p-3.5 rounded-xl border border-emerald-100">
                   <span className="text-[11px] font-bold text-emerald-700 uppercase">Gross Margin</span>
-                  <p className="text-lg font-black text-emerald-950 mt-0.5">${grossProfit.toFixed(2)}</p>
+                  <p className="text-lg font-black text-emerald-950 mt-0.5">{formatCurrency(grossProfit)}</p>
                   <span className="text-[10px] text-emerald-600 font-bold">~35.0% profit margin</span>
                 </div>
               </div>
@@ -479,7 +488,7 @@ export const DashboardScreen: React.FC = () => {
                           pay.type === 'RETAILER_COLLECTION' ? 'text-emerald-700' : 'text-slate-800'
                         }`}
                       >
-                        +${pay.amount.toFixed(2)}
+                        +{formatCurrency(pay.amount)}
                       </span>
                       <p className="text-[10px] text-slate-400">{new Date(pay.paymentDate).toLocaleDateString()}</p>
                     </div>

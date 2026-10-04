@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { useErp } from '../../context/ErpContext';
-import { MovementType } from '../../types/erp';
+import { InventoryMovement, MovementType } from '../../types/erp';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 import {
   Boxes,
   Search,
@@ -10,12 +12,27 @@ import {
   RefreshCw,
   FileText,
   Calendar,
+  Trash2,
 } from 'lucide-react';
 
 export const InventoryAuditScreen: React.FC = () => {
-  const { movements } = useErp();
+  const { isOwner } = useAuth();
+  const { movements, deleteMovement } = useErp();
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('ALL');
+  const [movementToDelete, setMovementToDelete] = useState<InventoryMovement | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleConfirmDelete = async () => {
+    if (!movementToDelete) return;
+    try {
+      setIsDeleting(true);
+      await deleteMovement(movementToDelete.id);
+      setMovementToDelete(null);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const filtered = movements.filter((m) => {
     const matchesSearch =
@@ -95,6 +112,7 @@ export const InventoryAuditScreen: React.FC = () => {
                 <th className="py-3 px-4 text-center">New Stock</th>
                 <th className="py-3 px-4">Reference Document</th>
                 <th className="py-3 px-4">Audit Memo</th>
+                {isOwner && <th className="py-3 px-4 text-center">Action</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
@@ -137,6 +155,17 @@ export const InventoryAuditScreen: React.FC = () => {
                       {m.referenceNumber || m.referenceType}
                     </td>
                     <td className="py-3.5 px-4 text-slate-600 text-xs">{m.reasonOrNotes || '—'}</td>
+                    {isOwner && (
+                      <td className="py-3.5 px-4 text-center">
+                        <button
+                          onClick={() => setMovementToDelete(m)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg min-h-[32px] min-w-[32px] inline-flex items-center justify-center transition-colors"
+                          title="Delete Audit Movement"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -144,6 +173,19 @@ export const InventoryAuditScreen: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {/* Delete Movement Confirmation */}
+      {movementToDelete && (
+        <ConfirmDialog
+          isOpen={true}
+          onClose={() => setMovementToDelete(null)}
+          onConfirm={handleConfirmDelete}
+          title="Delete Stock Movement Record?"
+          message={`Are you sure you want to delete the movement entry for '${movementToDelete.productName}' (${movementToDelete.movementType}, delta: ${movementToDelete.quantity})?`}
+          confirmText="Yes, Delete Record"
+          isLoading={isDeleting}
+        />
+      )}
     </div>
   );
 };

@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useErp } from '../../context/ErpContext';
-import { Supplier, Product, Purchase } from '../../types/erp';
+import { Supplier, Product, Purchase, Payment } from '../../types/erp';
 import { Modal } from '../common/Modal';
+import { ConfirmDialog } from '../common/ConfirmDialog';
+import { formatCurrency } from '../../lib/format';
 import {
-  Factory,
   Plus,
   Search,
   Phone,
@@ -12,10 +13,10 @@ import {
   MapPin,
   DollarSign,
   FilePlus,
-  Package,
   Trash2,
   Edit2,
-  Calendar,
+  History,
+  Receipt,
 } from 'lucide-react';
 
 export const SuppliersScreen: React.FC = () => {
@@ -26,7 +27,9 @@ export const SuppliersScreen: React.FC = () => {
     purchases,
     payments,
     saveSupplier,
+    deleteSupplier,
     recordPurchase,
+    deletePurchase,
     recordSupplierPayment,
   } = useErp();
 
@@ -43,10 +46,19 @@ export const SuppliersScreen: React.FC = () => {
 
   // Disburse Payment Modal
   const [disbursingSupplier, setDisbursingSupplier] = useState<Supplier | null>(null);
+  const [disbursePurchaseId, setDisbursePurchaseId] = useState<number | null>(null);
   const [disburseAmount, setDisburseAmount] = useState<number>(0);
   const [disburseMethod, setDisburseMethod] = useState<'BANK_TRANSFER' | 'CHEQUE' | 'CASH'>('BANK_TRANSFER');
   const [disburseRef, setDisburseRef] = useState('');
   const [disburseNotes, setDisburseNotes] = useState('');
+
+  // Payment History Modal
+  const [historySupplier, setHistorySupplier] = useState<Supplier | null>(null);
+
+  // Delete Confirmations
+  const [supplierToDelete, setSupplierToDelete] = useState<Supplier | null>(null);
+  const [purchaseToDelete, setPurchaseToDelete] = useState<Purchase | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const filteredSuppliers = suppliers.filter(
     (s) =>
@@ -118,7 +130,7 @@ export const SuppliersScreen: React.FC = () => {
 
     await recordSupplierPayment(
       disbursingSupplier.id,
-      null,
+      disbursePurchaseId || null,
       disburseAmount,
       disburseMethod,
       disburseRef || `WIRE-${Date.now() % 10000}`,
@@ -126,15 +138,48 @@ export const SuppliersScreen: React.FC = () => {
     );
 
     setDisbursingSupplier(null);
+    setDisbursePurchaseId(null);
     setDisburseAmount(0);
     setDisburseRef('');
     setDisburseNotes('');
+  };
+
+  const handleConfirmDeleteSupplier = async () => {
+    if (!supplierToDelete) return;
+    try {
+      setIsDeleting(true);
+      await deleteSupplier(supplierToDelete.id);
+      setSupplierToDelete(null);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleConfirmDeletePurchase = async () => {
+    if (!purchaseToDelete) return;
+    try {
+      setIsDeleting(true);
+      await deletePurchase(purchaseToDelete.id);
+      setPurchaseToDelete(null);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const purchaseTotal = purchaseItems.reduce(
     (sum, it) => sum + it.product.purchasePrice * it.quantity,
     0
   );
+
+  // Supplier purchases for the selected supplier in disburse modal
+  const unpaidPurchasesForDisbursing = disbursingSupplier
+    ? purchases.filter((p) => p.supplierId === disbursingSupplier.id && p.paymentStatus !== 'PAID')
+    : [];
+
+  // Payments for history modal
+  const supplierPaymentHistory = historySupplier
+    ? payments.filter((p) => p.type === 'SUPPLIER_PAYMENT' && p.entityId === historySupplier.id)
+    : [];
 
   return (
     <div className="space-y-6">
@@ -145,7 +190,7 @@ export const SuppliersScreen: React.FC = () => {
             Suppliers & Purchasing
           </h2>
           <p className="text-xs sm:text-sm text-slate-500">
-            Wholesale vendors, inbound inventory purchase orders, and payable balances
+            Wholesale vendors, inbound inventory purchase orders, disbursements, and payable balances
           </p>
         </div>
 
@@ -192,6 +237,8 @@ export const SuppliersScreen: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredSuppliers.map((s) => {
           const supplierPurchases = purchases.filter((p: Purchase) => p.supplierId === s.id);
+          const hasPayments = payments.some((p) => p.type === 'SUPPLIER_PAYMENT' && p.entityId === s.id);
+
           return (
             <div
               key={s.id}
@@ -240,7 +287,7 @@ export const SuppliersScreen: React.FC = () => {
                         s.payableBalance > 0 ? 'text-rose-700' : 'text-slate-800'
                       }`}
                     >
-                      ${s.payableBalance.toFixed(2)}
+                      {formatCurrency(s.payableBalance)}
                     </span>
                   </div>
                   <div className="text-right">
@@ -257,6 +304,7 @@ export const SuppliersScreen: React.FC = () => {
                   <button
                     onClick={() => {
                       setDisbursingSupplier(s);
+                      setDisbursePurchaseId(null);
                       setDisburseAmount(s.payableBalance > 0 ? s.payableBalance : 0);
                     }}
                     className="flex-1 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 min-h-[36px]"
@@ -266,15 +314,35 @@ export const SuppliersScreen: React.FC = () => {
                   </button>
 
                   <button
-                    onClick={() => {
-                      setEditingSupplier(s);
-                      setIsEditingSupplier(true);
-                    }}
-                    className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl min-h-[36px] min-w-[36px] flex items-center justify-center"
-                    title="Edit Supplier"
+                    onClick={() => setHistorySupplier(s)}
+                    className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl min-h-[36px] min-w-[36px] flex items-center justify-center"
+                    title="View Disbursement History"
                   >
-                    <Edit2 className="w-3.5 h-3.5" />
+                    <History className="w-3.5 h-3.5" />
                   </button>
+
+                  {isOwner && (
+                    <>
+                      <button
+                        onClick={() => {
+                          setEditingSupplier(s);
+                          setIsEditingSupplier(true);
+                        }}
+                        className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl min-h-[36px] min-w-[36px] flex items-center justify-center"
+                        title="Edit Supplier"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+
+                      <button
+                        onClick={() => setSupplierToDelete(s)}
+                        className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl min-h-[36px] min-w-[36px] flex items-center justify-center"
+                        title="Delete Supplier"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -340,7 +408,7 @@ export const SuppliersScreen: React.FC = () => {
                   >
                     <span>{p.name}</span>
                     <span className="text-[10px] text-blue-600 font-bold font-mono">
-                      + (${p.purchasePrice})
+                      + ({formatCurrency(p.purchasePrice)})
                     </span>
                   </button>
                 ))}
@@ -364,7 +432,7 @@ export const SuppliersScreen: React.FC = () => {
                     {purchaseItems.map((it, idx) => (
                       <tr key={it.product.id}>
                         <td className="p-2.5 font-bold text-slate-900">{it.product.name}</td>
-                        <td className="p-2.5 text-center">${it.product.purchasePrice.toFixed(2)}</td>
+                        <td className="p-2.5 text-center">{formatCurrency(it.product.purchasePrice)}</td>
                         <td className="p-2.5 text-center">
                           <input
                             type="number"
@@ -380,7 +448,7 @@ export const SuppliersScreen: React.FC = () => {
                           />
                         </td>
                         <td className="p-2.5 text-right font-black text-slate-900">
-                          ${(it.product.purchasePrice * it.quantity).toFixed(2)}
+                          {formatCurrency(it.product.purchasePrice * it.quantity)}
                         </td>
                         <td className="p-2.5 text-center">
                           <button
@@ -416,7 +484,7 @@ export const SuppliersScreen: React.FC = () => {
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between text-xs font-bold">
               <span className="text-slate-600">Total Purchase Value:</span>
               <span className="text-base text-blue-700 font-black">
-                ${purchaseTotal.toFixed(2)}
+                {formatCurrency(purchaseTotal)}
               </span>
             </div>
 
@@ -444,15 +512,50 @@ export const SuppliersScreen: React.FC = () => {
       {disbursingSupplier && (
         <Modal
           isOpen={true}
-          onClose={() => setDisbursingSupplier(null)}
+          onClose={() => {
+            setDisbursingSupplier(null);
+            setDisbursePurchaseId(null);
+          }}
           title={`Disburse Payment: ${disbursingSupplier.name}`}
-          subtitle={`Current payable balance: $${disbursingSupplier.payableBalance.toFixed(2)}`}
+          subtitle={`Current payable balance: ${formatCurrency(disbursingSupplier.payableBalance)}`}
           maxWidth="md"
         >
           <form onSubmit={handleConfirmDisburse} className="space-y-4">
+            {unpaidPurchasesForDisbursing.length > 0 && (
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                  Apply to Purchase Bill (Optional)
+                </label>
+                <select
+                  value={disbursePurchaseId || ''}
+                  onChange={(e) => {
+                    const pId = e.target.value ? parseInt(e.target.value) : null;
+                    setDisbursePurchaseId(pId);
+                    if (pId) {
+                      const pObj = unpaidPurchasesForDisbursing.find((p) => p.id === pId);
+                      if (pObj) {
+                        const remaining = Math.max(0, pObj.totalAmount - pObj.amountPaid);
+                        setDisburseAmount(remaining);
+                      }
+                    } else {
+                      setDisburseAmount(disbursingSupplier.payableBalance > 0 ? disbursingSupplier.payableBalance : 0);
+                    }
+                  }}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm outline-none bg-white"
+                >
+                  <option value="">General Supplier Account Balance</option>
+                  {unpaidPurchasesForDisbursing.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.billNumber} — Due: {formatCurrency(p.totalAmount - p.amountPaid)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                Disbursement Amount ($) *
+                Disbursement Amount (Rs.) *
               </label>
               <input
                 type="number"
@@ -523,6 +626,58 @@ export const SuppliersScreen: React.FC = () => {
               </button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {/* Supplier Payment History Modal */}
+      {historySupplier && (
+        <Modal
+          isOpen={true}
+          onClose={() => setHistorySupplier(null)}
+          title={`Disbursement History: ${historySupplier.name}`}
+          subtitle={`All recorded payments made to ${historySupplier.name}`}
+          maxWidth="lg"
+        >
+          <div className="space-y-4">
+            {supplierPaymentHistory.length === 0 ? (
+              <div className="text-center py-8 text-slate-400 text-xs">
+                No disbursements recorded for this supplier yet.
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden max-h-80 overflow-y-auto">
+                {supplierPaymentHistory.map((p) => (
+                  <div key={p.id} className="p-3.5 flex items-center justify-between text-xs hover:bg-slate-50">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-slate-800">{p.paymentNumber}</span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
+                          {p.paymentMethod.replace(/_/g, ' ')}
+                        </span>
+                      </div>
+                      <p className="text-slate-500 text-[11px] mt-0.5">
+                        Ref: {p.referenceNumber || 'N/A'} • {new Date(p.paymentDate).toLocaleDateString()}
+                      </p>
+                      {p.notes && <p className="text-slate-600 italic text-[11px] mt-0.5">"{p.notes}"</p>}
+                    </div>
+                    <div className="text-right">
+                      <span className="font-black text-sm text-slate-900">{formatCurrency(p.amount)}</span>
+                      <p className="text-[10px] text-slate-400">By {p.recordedByName}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="pt-3 border-t border-slate-200 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setHistorySupplier(null)}
+                className="px-4 py-2 bg-slate-100 text-slate-700 font-bold rounded-xl text-xs hover:bg-slate-200 min-h-[40px]"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </Modal>
       )}
 
@@ -622,6 +777,19 @@ export const SuppliersScreen: React.FC = () => {
             </div>
           </form>
         </Modal>
+      )}
+
+      {/* Delete Supplier Confirmation */}
+      {supplierToDelete && (
+        <ConfirmDialog
+          isOpen={true}
+          onClose={() => setSupplierToDelete(null)}
+          onConfirm={handleConfirmDeleteSupplier}
+          title={`Delete Supplier ${supplierToDelete.name}?`}
+          message={`Are you sure you want to permanently delete supplier ${supplierToDelete.name}? This will remove the vendor from your directory.`}
+          confirmText="Yes, Delete Supplier"
+          isLoading={isDeleting}
+        />
       )}
     </div>
   );

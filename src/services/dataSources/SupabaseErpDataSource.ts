@@ -111,20 +111,19 @@ export class SupabaseErpDataSource implements ErpDataSource {
 
   async updateRetailerBalance(id: number, delta: number): Promise<void> {
     const client = this.ensureConfigured();
-    const { error } = await client.rpc('increment_retailer_balance', {
-      retailer_id: id,
-      amount_delta: delta,
-    });
-    if (error) {
-      // Fallback update
-      const existing = await this.getRetailerById(id);
-      if (existing) {
-        await client
-          .from('retailers')
-          .update({ outstanding_balance: existing.outstandingBalance + delta })
-          .eq('id', id);
-      }
+    const existing = await this.getRetailerById(id);
+    if (existing) {
+      await client
+        .from('retailers')
+        .update({ outstanding_balance: existing.outstandingBalance + delta })
+        .eq('id', id);
     }
+  }
+
+  async deleteRetailer(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    const { error } = await client.from('retailers').delete().eq('id', id);
+    if (error) throw error;
   }
 
   // Suppliers
@@ -202,6 +201,12 @@ export class SupabaseErpDataSource implements ErpDataSource {
         .update({ payable_balance: existing.payableBalance + delta })
         .eq('id', id);
     }
+  }
+
+  async deleteSupplier(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    const { error } = await client.from('suppliers').delete().eq('id', id);
+    if (error) throw error;
   }
 
   // Products
@@ -289,6 +294,12 @@ export class SupabaseErpDataSource implements ErpDataSource {
         .update({ current_stock: existing.currentStock + qtyDelta })
         .eq('id', id);
     }
+  }
+
+  async deleteProduct(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    const { error } = await client.from('products').delete().eq('id', id);
+    if (error) throw error;
   }
 
   // Orders
@@ -415,6 +426,14 @@ export class SupabaseErpDataSource implements ErpDataSource {
     await client.from('orders').update(updatePayload).eq('id', orderId);
   }
 
+  async deleteOrder(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    // Delete order items first if not automatically cascaded
+    await client.from('order_items').delete().eq('order_id', id);
+    const { error } = await client.from('orders').delete().eq('id', id);
+    if (error) throw error;
+  }
+
   // Invoices
   async getInvoices(): Promise<Invoice[]> {
     const client = this.ensureConfigured();
@@ -530,6 +549,13 @@ export class SupabaseErpDataSource implements ErpDataSource {
     }
   }
 
+  async deleteInvoice(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    await client.from('invoice_items').delete().eq('invoice_id', id);
+    const { error } = await client.from('invoices').delete().eq('id', id);
+    if (error) throw error;
+  }
+
   // Purchases
   async getPurchases(): Promise<Purchase[]> {
     const client = this.ensureConfigured();
@@ -584,10 +610,39 @@ export class SupabaseErpDataSource implements ErpDataSource {
     };
   }
 
+  async updatePurchasePayment(purchaseId: number, amount: number): Promise<void> {
+    const client = this.ensureConfigured();
+    const { data: purchase, error } = await client.from('purchases').select('*').eq('id', purchaseId).single();
+    if (error || !purchase) return;
+
+    const currentPaid = parseFloat(purchase.amount_paid || '0');
+    const total = parseFloat(purchase.total_amount || '0');
+    const newPaid = currentPaid + amount;
+    const newStatus = newPaid >= total ? 'PAID' : newPaid > 0 ? 'PARTIALLY_PAID' : 'UNPAID';
+
+    await client
+      .from('purchases')
+      .update({
+        amount_paid: newPaid,
+        payment_status: newStatus,
+      })
+      .eq('id', purchaseId);
+  }
+
+  async deletePurchase(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    await client.from('purchase_items').delete().eq('purchase_id', id);
+    const { error } = await client.from('purchases').delete().eq('id', id);
+    if (error) throw error;
+  }
+
   // Payments
   async getPayments(): Promise<Payment[]> {
     const client = this.ensureConfigured();
-    const { data, error } = await client.from('payments').select('*, profiles(full_name)').order('payment_date', { ascending: false });
+    const { data, error } = await client
+      .from('payments')
+      .select('*, profiles(full_name)')
+      .order('payment_date', { ascending: false });
     if (error) throw error;
     return (data || []).map((row) => ({
       id: row.id,
@@ -610,18 +665,28 @@ export class SupabaseErpDataSource implements ErpDataSource {
 
   async createPayment(payment: Omit<Payment, 'id' | 'createdAt'>): Promise<Payment> {
     const client = this.ensureConfigured();
+    
+    // Resolve valid UUID for recorded_by_user_id or null to avoid 22P02 invalid input syntax for type uuid
+    let validUserId: string | null = null;
+    if (typeof payment.recordedByUserId === 'string' && payment.recordedByUserId.includes('-')) {
+      validUserId = payment.recordedByUserId;
+    } else {
+      const user = (await client.auth.getUser()).data?.user;
+      if (user?.id) validUserId = user.id;
+    }
+
     const payload = {
       payment_number: payment.paymentNumber,
       type: payment.type,
       entity_id: payment.entityId,
       entity_name: payment.entityName,
-      invoice_id: payment.invoiceId,
-      purchase_id: payment.purchaseId,
+      invoice_id: payment.invoiceId || null,
+      purchase_id: payment.purchaseId || null,
       amount: payment.amount,
       payment_method: payment.paymentMethod,
-      reference_number: payment.referenceNumber,
-      notes: payment.notes,
-      recorded_by_user_id: payment.recordedByUserId,
+      reference_number: payment.referenceNumber || null,
+      notes: payment.notes || null,
+      recorded_by_user_id: validUserId,
     };
     const { data, error } = await client.from('payments').insert([payload]).select().single();
     if (error) throw error;
@@ -630,6 +695,12 @@ export class SupabaseErpDataSource implements ErpDataSource {
       id: data.id,
       createdAt: new Date(data.created_at).getTime(),
     };
+  }
+
+  async deletePayment(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    const { error } = await client.from('payments').delete().eq('id', id);
+    if (error) throw error;
   }
 
   // Movements
@@ -678,23 +749,29 @@ export class SupabaseErpDataSource implements ErpDataSource {
     };
   }
 
+  async deleteMovement(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    const { error } = await client.from('inventory_movements').delete().eq('id', id);
+    if (error) throw error;
+  }
+
   // Deliveries
   async getDeliveries(): Promise<Delivery[]> {
     const client = this.ensureConfigured();
     const { data, error } = await client
       .from('deliveries')
-      .select('*, retailers(name)')
+      .select('*, retailers(name), orders(order_number), invoices(invoice_number)')
       .order('scheduled_date', { ascending: false });
     if (error) throw error;
     return (data || []).map((row) => ({
       id: row.id,
       orderId: row.order_id,
-      orderNumber: row.order_number,
+      orderNumber: row.orders?.order_number || row.order_number || `ORD-${row.order_id}`,
       invoiceId: row.invoice_id,
-      invoiceNumber: row.invoice_number,
+      invoiceNumber: row.invoices?.invoice_number || row.invoice_number,
       retailerId: row.retailer_id,
       retailerName: row.retailers?.name || '',
-      deliveryAddress: row.delivery_address,
+      deliveryAddress: row.delivery_address || '',
       driverName: row.driver_name,
       driverPhone: row.driver_phone,
       status: row.status,
@@ -709,14 +786,14 @@ export class SupabaseErpDataSource implements ErpDataSource {
     const client = this.ensureConfigured();
     const payload = {
       order_id: delivery.orderId,
-      invoice_id: delivery.invoiceId,
+      invoice_id: delivery.invoiceId || null,
       retailer_id: delivery.retailerId,
       delivery_address: delivery.deliveryAddress,
-      driver_name: delivery.driverName,
-      driver_phone: delivery.driverPhone,
+      driver_name: delivery.driverName || null,
+      driver_phone: delivery.driverPhone || null,
       status: delivery.status,
       scheduled_date: new Date(delivery.scheduledDate).toISOString(),
-      notes: delivery.notes,
+      notes: delivery.notes || null,
     };
     const { data, error } = await client.from('deliveries').insert([payload]).select().single();
     if (error) throw error;
@@ -740,7 +817,13 @@ export class SupabaseErpDataSource implements ErpDataSource {
     await client.from('deliveries').update(payload).eq('id', id);
   }
 
-  // Users
+  async deleteDelivery(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    const { error } = await client.from('deliveries').delete().eq('id', id);
+    if (error) throw error;
+  }
+
+  // Users / Profiles
   async getUsers(): Promise<User[]> {
     const client = this.ensureConfigured();
     const { data, error } = await client.from('profiles').select('*').order('full_name');
@@ -764,20 +847,57 @@ export class SupabaseErpDataSource implements ErpDataSource {
 
   async saveUser(user: Omit<User, 'id' | 'createdAt'> & { id?: number }): Promise<User> {
     const client = this.ensureConfigured();
+    
+    // Determine profile UUID: either existing user.cloudId or generate a new UUID
+    const profileId = user.cloudId || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `usr-${Date.now()}`);
+
     const payload = {
+      id: profileId,
       username: user.username,
       full_name: user.fullName,
       role: user.role,
-      phone: user.phone,
+      phone: user.phone || '',
       is_active: user.isActive ?? true,
     };
-    const { data, error } = await client.from('profiles').upsert([payload]).select().single();
-    if (error) throw error;
-    return {
-      ...user,
-      id: user.id || 1,
-      cloudId: data.id,
-      createdAt: new Date(data.created_at).getTime(),
-    };
+
+    if (user.cloudId) {
+      const { data, error } = await client
+        .from('profiles')
+        .update({
+          username: user.username,
+          full_name: user.fullName,
+          role: user.role,
+          phone: user.phone || '',
+          is_active: user.isActive ?? true,
+        })
+        .eq('id', user.cloudId)
+        .select()
+        .single();
+      if (error) throw error;
+      return {
+        ...user,
+        id: user.id || Date.now(),
+        cloudId: data.id,
+        createdAt: new Date(data.created_at).getTime(),
+      };
+    } else {
+      const { data, error } = await client.from('profiles').insert([payload]).select().single();
+      if (error) throw error;
+      return {
+        ...user,
+        id: user.id || Date.now(),
+        cloudId: data.id,
+        createdAt: new Date(data.created_at).getTime(),
+      };
+    }
+  }
+
+  async deleteUser(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    const user = await this.getUserById(id);
+    if (user?.cloudId) {
+      const { error } = await client.from('profiles').delete().eq('id', user.cloudId);
+      if (error) throw error;
+    }
   }
 }

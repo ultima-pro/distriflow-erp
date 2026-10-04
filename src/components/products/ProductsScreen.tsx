@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useErp } from '../../context/ErpContext';
 import { Product } from '../../types/erp';
+import { formatCurrency } from '../../lib/format';
 import { Modal } from '../common/Modal';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 import {
   Search,
   Plus,
@@ -11,6 +13,7 @@ import {
   ArrowUpDown,
   History,
   Edit2,
+  Trash2,
   Boxes,
   CheckCircle,
   TrendingDown,
@@ -24,6 +27,7 @@ export const ProductsScreen: React.FC = () => {
     suppliers,
     movements,
     saveProduct,
+    deleteProduct,
     adjustStock,
     setActiveTab,
   } = useErp();
@@ -43,6 +47,10 @@ export const ProductsScreen: React.FC = () => {
 
   // Product History Modal
   const [historyProduct, setHistoryProduct] = useState<Product | null>(null);
+
+  // Delete product state
+  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const categories = Array.from(new Set(products.map((p) => p.category)));
 
@@ -109,6 +117,17 @@ export const ProductsScreen: React.FC = () => {
     setAdjustingProduct(null);
     setAdjDelta(0);
     setAdjReason('');
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!productToDelete) return;
+    try {
+      setIsDeleting(true);
+      await deleteProduct(productToDelete.id);
+      setProductToDelete(null);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const productMovements = historyProduct
@@ -227,12 +246,12 @@ export const ProductsScreen: React.FC = () => {
 
                     {isOwner && (
                       <td className="py-3.5 px-4 text-right text-slate-500 font-semibold">
-                        ${p.purchasePrice.toFixed(2)}
+                        {formatCurrency(p.purchasePrice)}
                       </td>
                     )}
 
                     <td className="py-3.5 px-4 text-right font-black text-blue-700 text-sm">
-                      ${p.sellingPrice.toFixed(2)}
+                      {formatCurrency(p.sellingPrice)}
                     </td>
 
                     <td className="py-3.5 px-4 text-center">
@@ -256,6 +275,13 @@ export const ProductsScreen: React.FC = () => {
                               title="Edit Product"
                             >
                               <Edit2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => setProductToDelete(p)}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg min-h-[36px] min-w-[36px] flex items-center justify-center"
+                              title="Delete Product"
+                            >
+                              <Trash2 className="w-4 h-4" />
                             </button>
                           </>
                         )}
@@ -416,7 +442,7 @@ export const ProductsScreen: React.FC = () => {
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                  Purchase Cost ($)
+                  Purchase Cost (Rs.)
                 </label>
                 <input
                   type="number"
@@ -434,7 +460,7 @@ export const ProductsScreen: React.FC = () => {
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                  Selling Price ($) *
+                  Selling Price (Rs.) *
                 </label>
                 <input
                   type="number"
@@ -589,6 +615,19 @@ export const ProductsScreen: React.FC = () => {
             )}
           </div>
         </Modal>
+      )}
+
+      {/* Delete Product Confirmation */}
+      {productToDelete && (
+        <ConfirmDialog
+          isOpen={true}
+          onClose={() => setProductToDelete(null)}
+          onConfirm={handleConfirmDelete}
+          title={`Delete Product ${productToDelete.name}?`}
+          message={`Are you sure you want to permanently delete '${productToDelete.name}' (${productToDelete.sku})? This action cannot be undone. Products with existing order or purchase history cannot be deleted to preserve financial audit trail.`}
+          confirmText="Yes, Delete Product"
+          isLoading={isDeleting}
+        />
       )}
     </div>
   );
