@@ -51,12 +51,7 @@ class ErpServiceClass {
     return this.dataSource.saveRetailer(retailer);
   }
 
-  async deleteRetailer(id: number): Promise<void> {
-    const orders = await this.dataSource.getOrders();
-    const hasOrders = orders.some((o) => o.retailerId === id);
-    if (hasOrders) {
-      throw new Error('Cannot delete retailer with existing orders. Please delete associated orders first or deactivate the account.');
-    }
+  async deleteRetailer(id: number): Promise<{ deleted: boolean; deactivated: boolean }> {
     return this.dataSource.deleteRetailer(id);
   }
 
@@ -73,12 +68,7 @@ class ErpServiceClass {
     return this.dataSource.saveSupplier(supplier);
   }
 
-  async deleteSupplier(id: number): Promise<void> {
-    const purchases = await this.dataSource.getPurchases();
-    const hasPurchases = purchases.some((p) => p.supplierId === id);
-    if (hasPurchases) {
-      throw new Error('Cannot delete supplier with existing purchase records. Please delete purchase records first or deactivate the vendor.');
-    }
+  async deleteSupplier(id: number): Promise<{ deleted: boolean; deactivated: boolean }> {
     return this.dataSource.deleteSupplier(id);
   }
 
@@ -95,7 +85,7 @@ class ErpServiceClass {
     return this.dataSource.saveProduct(product);
   }
 
-  async deleteProduct(id: number): Promise<void> {
+  async deleteProduct(id: number): Promise<{ deleted: boolean; deactivated: boolean }> {
     return this.dataSource.deleteProduct(id);
   }
 
@@ -222,6 +212,15 @@ class ErpServiceClass {
   async deleteInvoice(invoiceId: number): Promise<void> {
     const invoice = await this.dataSource.getInvoiceById(invoiceId);
     if (!invoice) throw new Error('Invoice not found');
+
+    if (invoice.amountPaid > 0) {
+      throw new Error('Cannot delete an invoice that has payments recorded. Please reverse or remove associated payments first.');
+    }
+    const payments = await this.dataSource.getPayments();
+    const hasPayments = payments.some((p) => p.invoiceId === invoiceId);
+    if (hasPayments) {
+      throw new Error('Cannot delete invoice linked to existing payment records. Please remove payments first.');
+    }
 
     // Deduct invoice amount from retailer outstanding balance
     await this.dataSource.updateRetailerBalance(invoice.retailerId, -invoice.remainingBalance);
@@ -405,12 +404,21 @@ class ErpServiceClass {
   async deletePurchase(id: number): Promise<void> {
     const purchases = await this.dataSource.getPurchases();
     const purchase = purchases.find((p) => p.id === id);
-    if (purchase) {
-      // Deduct unpaid amount from supplier payable balance
-      const unpaid = purchase.totalAmount - purchase.amountPaid;
-      if (unpaid > 0) {
-        await this.dataSource.updateSupplierBalance(purchase.supplierId, -unpaid);
-      }
+    if (!purchase) throw new Error('Purchase not found');
+
+    if (purchase.amountPaid > 0) {
+      throw new Error('Cannot delete purchase with recorded payments. Please reverse or remove disbursements first.');
+    }
+    const payments = await this.dataSource.getPayments();
+    const hasPayments = payments.some((p) => p.purchaseId === id);
+    if (hasPayments) {
+      throw new Error('Cannot delete purchase that has disbursement payments recorded.');
+    }
+
+    // Deduct unpaid amount from supplier payable balance
+    const unpaid = purchase.totalAmount - purchase.amountPaid;
+    if (unpaid > 0) {
+      await this.dataSource.updateSupplierBalance(purchase.supplierId, -unpaid);
     }
     return this.dataSource.deletePurchase(id);
   }
@@ -513,8 +521,19 @@ class ErpServiceClass {
       // Reverse balance effect
       if (payment.type === 'RETAILER_COLLECTION') {
         await this.dataSource.updateRetailerBalance(payment.entityId, payment.amount);
+        if (payment.invoiceId) {
+          const invoice = await this.dataSource.getInvoiceById(payment.invoiceId);
+          if (invoice) {
+            const newPaid = Math.max(0, invoice.amountPaid - payment.amount);
+            const newStatus = newPaid <= 0 ? 'UNPAID' : 'PARTIALLY_PAID';
+            await this.dataSource.updateInvoicePayment(payment.invoiceId, -payment.amount, newStatus);
+          }
+        }
       } else if (payment.type === 'SUPPLIER_PAYMENT') {
         await this.dataSource.updateSupplierBalance(payment.entityId, payment.amount);
+        if (payment.purchaseId) {
+          await this.dataSource.updatePurchasePayment(payment.purchaseId, -payment.amount);
+        }
       }
     }
     return this.dataSource.deletePayment(id);

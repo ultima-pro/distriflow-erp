@@ -194,6 +194,12 @@ export interface InventoryMovement {
 
 export type DeliveryStatus = 'SCHEDULED' | 'DISPATCHED' | 'DELIVERED' | 'FAILED';
 
+export interface DeleteResult {
+  deleted: boolean;
+  deactivated: boolean;
+  message?: string;
+}
+
 export interface Delivery {
   id: number;
   orderId: number;

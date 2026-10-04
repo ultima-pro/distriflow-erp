@@ -27,21 +27,21 @@ export interface ErpDataSource {
   getRetailerById(id: number): Promise<Retailer | null>;
   saveRetailer(retailer: Omit<Retailer, 'id' | 'createdAt'> & { id?: number }): Promise<Retailer>;
   updateRetailerBalance(id: number, delta: number): Promise<void>;
-  deleteRetailer(id: number): Promise<void>;
+  deleteRetailer(id: number): Promise<{ deleted: boolean; deactivated: boolean }>;
 
   // Suppliers
   getSuppliers(): Promise<Supplier[]>;
   getSupplierById(id: number): Promise<Supplier | null>;
   saveSupplier(supplier: Omit<Supplier, 'id' | 'createdAt'> & { id?: number }): Promise<Supplier>;
   updateSupplierBalance(id: number, delta: number): Promise<void>;
-  deleteSupplier(id: number): Promise<void>;
+  deleteSupplier(id: number): Promise<{ deleted: boolean; deactivated: boolean }>;
 
   // Products
   getProducts(): Promise<Product[]>;
   getProductById(id: number): Promise<Product | null>;
   saveProduct(product: Omit<Product, 'id' | 'createdAt'> & { id?: number }): Promise<Product>;
   updateProductStock(id: number, qtyDelta: number): Promise<void>;
-  deleteProduct(id: number): Promise<void>;
+  deleteProduct(id: number): Promise<{ deleted: boolean; deactivated: boolean }>;
 
   // Orders & Items
   getOrders(): Promise<Order[]>;

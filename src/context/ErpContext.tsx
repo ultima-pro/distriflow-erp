@@ -85,15 +85,15 @@ interface ErpContextType {
   deleteDelivery: (deliveryId: number) => Promise<void>;
 
   saveRetailer: (retailer: Omit<Retailer, 'id' | 'createdAt'> & { id?: number }) => Promise<Retailer>;
-  deleteRetailer: (retailerId: number) => Promise<void>;
+  deleteRetailer: (retailerId: number) => Promise<{ deleted: boolean; deactivated: boolean }>;
 
   saveProduct: (product: Omit<Product, 'id' | 'createdAt'> & { id?: number }) => Promise<Product>;
   adjustStock: (productId: number, delta: number, reason: string) => Promise<void>;
-  deleteProduct: (productId: number) => Promise<void>;
+  deleteProduct: (productId: number) => Promise<{ deleted: boolean; deactivated: boolean }>;
   deleteMovement: (movementId: number) => Promise<void>;
 
   saveSupplier: (supplier: Omit<Supplier, 'id' | 'createdAt'> & { id?: number }) => Promise<Supplier>;
-  deleteSupplier: (supplierId: number) => Promise<void>;
+  deleteSupplier: (supplierId: number) => Promise<{ deleted: boolean; deactivated: boolean }>;
 
   recordPurchase: (
     supplierId: number,
@@ -368,9 +368,14 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteRetailer = async (retailerId: number) => {
     try {
-      await ErpService.deleteRetailer(retailerId);
+      const res = await ErpService.deleteRetailer(retailerId);
       await refreshData();
-      showToast('Retailer deleted successfully', 'success');
+      if (res?.deactivated) {
+        showToast('Retailer has transaction history and was deactivated instead of deleted', 'info');
+      } else {
+        showToast('Retailer deleted successfully', 'success');
+      }
+      return res;
     } catch (err: any) {
       showToast(err.message || 'Failed to delete retailer', 'error');
       throw err;
@@ -391,9 +396,14 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteProduct = async (productId: number) => {
     try {
-      await ErpService.deleteProduct(productId);
+      const res = await ErpService.deleteProduct(productId);
       await refreshData();
-      showToast('Product deleted successfully', 'success');
+      if (res?.deactivated) {
+        showToast('Product has historical records and was deactivated instead of deleted', 'info');
+      } else {
+        showToast('Product deleted successfully', 'success');
+      }
+      return res;
     } catch (err: any) {
       showToast(err.message || 'Failed to delete product', 'error');
       throw err;
@@ -436,9 +446,14 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteSupplier = async (supplierId: number) => {
     try {
-      await ErpService.deleteSupplier(supplierId);
+      const res = await ErpService.deleteSupplier(supplierId);
       await refreshData();
-      showToast('Supplier deleted successfully', 'success');
+      if (res?.deactivated) {
+        showToast('Supplier has purchase records and was deactivated instead of deleted', 'info');
+      } else {
+        showToast('Supplier deleted successfully', 'success');
+      }
+      return res;
     } catch (err: any) {
       showToast(err.message || 'Failed to delete supplier', 'error');
       throw err;

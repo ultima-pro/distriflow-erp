@@ -91,8 +91,15 @@ export class DevErpDataSource implements ErpDataSource {
     }
   }
 
-  async deleteRetailer(id: number): Promise<void> {
+  async deleteRetailer(id: number): Promise<{ deleted: boolean; deactivated: boolean }> {
+    const hasOrders = this.orders.some((o) => o.retailerId === id);
+    if (hasOrders) {
+      const retailer = this.retailers.find((r) => r.id === id);
+      if (retailer) retailer.isActive = false;
+      return { deleted: false, deactivated: true };
+    }
     this.retailers = this.retailers.filter((r) => r.id !== id);
+    return { deleted: true, deactivated: false };
   }
 
   // Suppliers
@@ -136,8 +143,15 @@ export class DevErpDataSource implements ErpDataSource {
     }
   }
 
-  async deleteSupplier(id: number): Promise<void> {
+  async deleteSupplier(id: number): Promise<{ deleted: boolean; deactivated: boolean }> {
+    const hasPurchases = this.purchases.some((p) => p.supplierId === id);
+    if (hasPurchases) {
+      const supplier = this.suppliers.find((s) => s.id === id);
+      if (supplier) supplier.isActive = false;
+      return { deleted: false, deactivated: true };
+    }
     this.suppliers = this.suppliers.filter((s) => s.id !== id);
+    return { deleted: true, deactivated: false };
   }
 
   // Products
@@ -180,8 +194,20 @@ export class DevErpDataSource implements ErpDataSource {
     }
   }
 
-  async deleteProduct(id: number): Promise<void> {
+  async deleteProduct(id: number): Promise<{ deleted: boolean; deactivated: boolean }> {
+    const hasHistory =
+      this.orderItems.some((i) => i.productId === id) ||
+      this.purchaseItems.some((i) => i.productId === id) ||
+      this.movements.some((m) => m.productId === id);
+
+    if (hasHistory) {
+      const product = this.products.find((p) => p.id === id);
+      if (product) product.isActive = false;
+      return { deleted: false, deactivated: true };
+    }
+
     this.products = this.products.filter((p) => p.id !== id);
+    return { deleted: true, deactivated: false };
   }
 
   // Orders

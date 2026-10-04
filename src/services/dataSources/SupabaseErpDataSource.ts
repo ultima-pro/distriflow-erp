@@ -120,10 +120,38 @@ export class SupabaseErpDataSource implements ErpDataSource {
     }
   }
 
-  async deleteRetailer(id: number): Promise<void> {
+  async deleteRetailer(id: number): Promise<{ deleted: boolean; deactivated: boolean }> {
     const client = this.ensureConfigured();
-    const { error } = await client.from('retailers').delete().eq('id', id);
-    if (error) throw error;
+    const { count: ordersCount } = await client
+      .from('orders')
+      .select('*', { count: 'exact', head: true })
+      .eq('retailer_id', id);
+
+    const { count: invoicesCount } = await client
+      .from('invoices')
+      .select('*', { count: 'exact', head: true })
+      .eq('retailer_id', id);
+
+    const hasHistory = (ordersCount || 0) > 0 || (invoicesCount || 0) > 0;
+    if (hasHistory) {
+      const { error: updateError } = await client
+        .from('retailers')
+        .update({ is_active: false })
+        .eq('id', id);
+      if (updateError) throw updateError;
+      return { deleted: false, deactivated: true };
+    }
+
+    const { error: deleteError } = await client.from('retailers').delete().eq('id', id);
+    if (deleteError) {
+      const { error: updateError } = await client
+        .from('retailers')
+        .update({ is_active: false })
+        .eq('id', id);
+      if (updateError) throw deleteError;
+      return { deleted: false, deactivated: true };
+    }
+    return { deleted: true, deactivated: false };
   }
 
   // Suppliers
@@ -203,10 +231,33 @@ export class SupabaseErpDataSource implements ErpDataSource {
     }
   }
 
-  async deleteSupplier(id: number): Promise<void> {
+  async deleteSupplier(id: number): Promise<{ deleted: boolean; deactivated: boolean }> {
     const client = this.ensureConfigured();
-    const { error } = await client.from('suppliers').delete().eq('id', id);
-    if (error) throw error;
+    const { count: purchasesCount } = await client
+      .from('purchases')
+      .select('*', { count: 'exact', head: true })
+      .eq('supplier_id', id);
+
+    const hasHistory = (purchasesCount || 0) > 0;
+    if (hasHistory) {
+      const { error: updateError } = await client
+        .from('suppliers')
+        .update({ is_active: false })
+        .eq('id', id);
+      if (updateError) throw updateError;
+      return { deleted: false, deactivated: true };
+    }
+
+    const { error: deleteError } = await client.from('suppliers').delete().eq('id', id);
+    if (deleteError) {
+      const { error: updateError } = await client
+        .from('suppliers')
+        .update({ is_active: false })
+        .eq('id', id);
+      if (updateError) throw deleteError;
+      return { deleted: false, deactivated: true };
+    }
+    return { deleted: true, deactivated: false };
   }
 
   // Products
@@ -296,10 +347,47 @@ export class SupabaseErpDataSource implements ErpDataSource {
     }
   }
 
-  async deleteProduct(id: number): Promise<void> {
+  async deleteProduct(id: number): Promise<{ deleted: boolean; deactivated: boolean }> {
     const client = this.ensureConfigured();
-    const { error } = await client.from('products').delete().eq('id', id);
-    if (error) throw error;
+    const { count: orderItemsCount } = await client
+      .from('order_items')
+      .select('*', { count: 'exact', head: true })
+      .eq('product_id', id);
+
+    const { count: purchaseItemsCount } = await client
+      .from('purchase_items')
+      .select('*', { count: 'exact', head: true })
+      .eq('product_id', id);
+
+    const { count: movementsCount } = await client
+      .from('inventory_movements')
+      .select('*', { count: 'exact', head: true })
+      .eq('product_id', id);
+
+    const hasHistory =
+      (orderItemsCount || 0) > 0 ||
+      (purchaseItemsCount || 0) > 0 ||
+      (movementsCount || 0) > 0;
+
+    if (hasHistory) {
+      const { error: updateError } = await client
+        .from('products')
+        .update({ is_active: false })
+        .eq('id', id);
+      if (updateError) throw updateError;
+      return { deleted: false, deactivated: true };
+    }
+
+    const { error: deleteError } = await client.from('products').delete().eq('id', id);
+    if (deleteError) {
+      const { error: updateError } = await client
+        .from('products')
+        .update({ is_active: false })
+        .eq('id', id);
+      if (updateError) throw deleteError;
+      return { deleted: false, deactivated: true };
+    }
+    return { deleted: true, deactivated: false };
   }
 
   // Orders
@@ -529,7 +617,10 @@ export class SupabaseErpDataSource implements ErpDataSource {
       discount: it.discount,
       total: it.total,
     }));
-    await client.from('invoice_items').insert(itemsPayload);
+    if (itemsPayload.length > 0) {
+      const { error: itemsError } = await client.from('invoice_items').insert(itemsPayload);
+      if (itemsError) throw itemsError;
+    }
 
     return (await this.getInvoiceById(data.id))!;
   }
@@ -538,14 +629,18 @@ export class SupabaseErpDataSource implements ErpDataSource {
     const client = this.ensureConfigured();
     const invoice = await this.getInvoiceById(id);
     if (invoice) {
-      await client
+      const newPaid = Math.max(0, invoice.amountPaid + amount);
+      const newRemaining = Math.max(0, invoice.totalAmount - newPaid);
+      const computedStatus = newPaid >= invoice.totalAmount ? 'PAID' : newPaid > 0 ? 'PARTIALLY_PAID' : 'UNPAID';
+      const { error } = await client
         .from('invoices')
         .update({
-          amount_paid: invoice.amountPaid + amount,
-          remaining_balance: Math.max(0, invoice.remainingBalance - amount),
-          payment_status: status,
+          amount_paid: newPaid,
+          remaining_balance: newRemaining,
+          payment_status: status || computedStatus,
         })
         .eq('id', id);
+      if (error) throw error;
     }
   }
 
@@ -601,7 +696,10 @@ export class SupabaseErpDataSource implements ErpDataSource {
       purchase_price: it.purchasePrice,
       total: it.total,
     }));
-    await client.from('purchase_items').insert(itemsPayload);
+    if (itemsPayload.length > 0) {
+      const { error: itemsError } = await client.from('purchase_items').insert(itemsPayload);
+      if (itemsError) throw itemsError;
+    }
 
     return {
       ...purchase,
@@ -617,16 +715,17 @@ export class SupabaseErpDataSource implements ErpDataSource {
 
     const currentPaid = parseFloat(purchase.amount_paid || '0');
     const total = parseFloat(purchase.total_amount || '0');
-    const newPaid = currentPaid + amount;
+    const newPaid = Math.max(0, currentPaid + amount);
     const newStatus = newPaid >= total ? 'PAID' : newPaid > 0 ? 'PARTIALLY_PAID' : 'UNPAID';
 
-    await client
+    const { error: updateError } = await client
       .from('purchases')
       .update({
         amount_paid: newPaid,
         payment_status: newStatus,
       })
       .eq('id', purchaseId);
+    if (updateError) throw updateError;
   }
 
   async deletePurchase(id: number): Promise<void> {
