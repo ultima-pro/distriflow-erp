@@ -1,0 +1,6 @@
+{
+  "name": "DistriFlow ERP",
+  "description": "Distribution Management ERP for small-to-medium distributors. Manage retailers, sales orders, inventory movements, deliveries, invoices, and payments with Owner and Salesperson roles.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
