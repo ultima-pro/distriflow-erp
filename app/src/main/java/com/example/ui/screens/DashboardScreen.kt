@@ -300,7 +300,7 @@ fun OwnerDashboardMetrics(
         ) {
             MetricCard(
                 title = "Today's Sales",
-                value = "$${String.format("%,.2f", todaySales)}",
+                value = "Rs. ${String.format("%,.2f", todaySales)}",
                 subtitle = "Approved/Delivered",
                 icon = Icons.Default.TrendingUp,
                 iconColor = StatusGreen,
@@ -308,7 +308,7 @@ fun OwnerDashboardMetrics(
             )
             MetricCard(
                 title = "Monthly Sales",
-                value = "$${String.format("%,.2f", monthlySales)}",
+                value = "Rs. ${String.format("%,.2f", monthlySales)}",
                 subtitle = "Last 30 Days",
                 icon = Icons.Default.CalendarMonth,
                 iconColor = BlueAccent,
@@ -322,7 +322,7 @@ fun OwnerDashboardMetrics(
         ) {
             MetricCard(
                 title = "Total Receivables",
-                value = "$${String.format("%,.2f", totalReceivables)}",
+                value = "Rs. ${String.format("%,.2f", totalReceivables)}",
                 subtitle = "Retailer Balances",
                 icon = Icons.Default.AccountBalanceWallet,
                 iconColor = AmberTertiary,
@@ -330,7 +330,7 @@ fun OwnerDashboardMetrics(
             )
             MetricCard(
                 title = "Supplier Payables",
-                value = "$${String.format("%,.2f", supplierPayables)}",
+                value = "Rs. ${String.format("%,.2f", supplierPayables)}",
                 subtitle = "Pending Invoices",
                 icon = Icons.Default.RequestQuote,
                 iconColor = StatusRed,
@@ -344,7 +344,7 @@ fun OwnerDashboardMetrics(
         ) {
             MetricCard(
                 title = "Inventory Value",
-                value = "$${String.format("%,.2f", inventoryValuation)}",
+                value = "Rs. ${String.format("%,.2f", inventoryValuation)}",
                 subtitle = "${products.sumOf { it.currentStock }} Units in Stock",
                 icon = Icons.Default.Warehouse,
                 iconColor = TealSecondary,
@@ -389,14 +389,14 @@ fun SalespersonDashboardMetrics(
         ) {
             MetricCard(
                 title = "My Today's Sales",
-                value = "$${String.format("%,.2f", todaySales)}",
+                value = "Rs. ${String.format("%,.2f", todaySales)}",
                 icon = Icons.Default.AttachMoney,
                 iconColor = StatusGreen,
                 modifier = Modifier.weight(1f)
             )
             MetricCard(
                 title = "My Month's Sales",
-                value = "$${String.format("%,.2f", monthSales)}",
+                value = "Rs. ${String.format("%,.2f", monthSales)}",
                 icon = Icons.Default.CalendarMonth,
                 iconColor = BlueAccent,
                 modifier = Modifier.weight(1f)
@@ -438,7 +438,7 @@ fun SalespersonDashboardMetrics(
             )
             MetricCard(
                 title = "Outstanding Balance",
-                value = "$${String.format("%,.2f", outstanding)}",
+                value = "Rs. ${String.format("%,.2f", outstanding)}",
                 subtitle = "Across my accounts",
                 icon = Icons.Default.CreditCard,
                 iconColor = StatusRed,
@@ -472,12 +472,12 @@ fun RetailerQuickCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Due Balance: ", fontSize = 12.sp, color = Slate600)
                     Text(
-                        "$${String.format("%,.2f", retailer.outstandingBalance)}",
+                        "Rs. ${String.format("%,.2f", retailer.outstandingBalance)}",
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
                         color = if (retailer.outstandingBalance > 0) StatusRed else StatusGreen
                     )
-                    Text(" (Limit: $${String.format("%,.0f", retailer.creditLimit)})", fontSize = 11.sp, color = Slate400)
+                    Text(" (Limit: Rs. ${String.format("%,.0f", retailer.creditLimit)})", fontSize = 11.sp, color = Slate400)
                 }
             }
             Button(
@@ -520,12 +520,12 @@ fun ProfitLossCard(orders: List<Order>, products: List<Product>) {
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Total Recognized Sales Revenue:", color = Slate600, fontSize = 13.sp)
-                Text("$${String.format("%,.2f", totalRevenue)}", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Text("Rs. ${String.format("%,.2f", totalRevenue)}", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
             }
             Spacer(modifier = Modifier.height(4.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Estimated Cost of Goods Sold (COGS):", color = Slate600, fontSize = 13.sp)
-                Text("- $${String.format("%,.2f", estimatedCogs)}", color = StatusRed, fontSize = 13.sp)
+                Text("- Rs. ${String.format("%,.2f", estimatedCogs)}", color = StatusRed, fontSize = 13.sp)
             }
             Spacer(modifier = Modifier.height(6.dp))
             HorizontalDivider()
@@ -533,7 +533,7 @@ fun ProfitLossCard(orders: List<Order>, products: List<Product>) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Gross Operating Margin:", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 Text(
-                    "$${String.format("%,.2f", grossProfit)} (35%)",
+                    "Rs. ${String.format("%,.2f", grossProfit)} (35%)",
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp,
                     color = StatusGreen

@@ -15,6 +15,8 @@ import {
   OrderStatus,
   InvoicePaymentStatus,
   DeliveryStatus,
+  CompanyProfile,
+  AuditLog,
 } from '../../types/erp';
 
 /**
@@ -64,6 +66,7 @@ export interface ErpDataSource {
   ): Promise<Invoice>;
   updateInvoicePayment(id: number, amount: number, status: InvoicePaymentStatus): Promise<void>;
   deleteInvoice(id: number): Promise<void>;
+  voidInvoice(id: number, reason?: string, voidedBy?: string): Promise<void>;
 
   // Purchases & Items
   getPurchases(): Promise<Purchase[]>;
@@ -73,11 +76,13 @@ export interface ErpDataSource {
   ): Promise<Purchase>;
   updatePurchasePayment(purchaseId: number, amount: number): Promise<void>;
   deletePurchase(id: number): Promise<void>;
+  voidPurchase(id: number, reason?: string, voidedBy?: string): Promise<void>;
 
   // Payments
   getPayments(): Promise<Payment[]>;
   createPayment(payment: Omit<Payment, 'id' | 'createdAt'>): Promise<Payment>;
   deletePayment(id: number): Promise<void>;
+  reversePayment(id: number, reason?: string, reversedBy?: string): Promise<void>;
 
   // Inventory Movements (Audit Trail)
   getMovements(): Promise<InventoryMovement[]>;
@@ -95,4 +100,25 @@ export interface ErpDataSource {
   getUserById(id: number): Promise<User | null>;
   saveUser(user: Omit<User, 'id' | 'createdAt'> & { id?: number }): Promise<User>;
   deleteUser(id: number): Promise<void>;
+
+  // Master Data Restore & Dependency-Protected Permanent Deletion
+  restoreProduct(id: number): Promise<void>;
+  permanentDeleteProduct(id: number): Promise<void>;
+  restoreRetailer(id: number): Promise<void>;
+  permanentDeleteRetailer(id: number): Promise<void>;
+  restoreSupplier(id: number): Promise<void>;
+  permanentDeleteSupplier(id: number): Promise<void>;
+  restoreUser(id: number): Promise<void>;
+  permanentDeleteUser(id: number): Promise<void>;
+  restoreOrder(id: number): Promise<void>;
+  permanentDeleteOrder(id: number): Promise<void>;
+
+  // Company Profile
+  getCompanyProfile(): Promise<CompanyProfile>;
+  saveCompanyProfile(profile: Partial<CompanyProfile>): Promise<CompanyProfile>;
+
+  // Audit Logs
+  getAuditLogs(limit?: number): Promise<AuditLog[]>;
+  createAuditLog(log: Omit<AuditLog, 'id' | 'timestamp'>): Promise<AuditLog>;
 }
+

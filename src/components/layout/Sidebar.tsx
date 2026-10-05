@@ -17,6 +17,7 @@ import {
   ChevronRight,
   Shield,
   UserCheck,
+  Building2,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -26,7 +27,7 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onCloseMobile }) => {
   const { isOwner, currentUser } = useAuth();
-  const { activeTab, setActiveTab, orders, lowStockProducts } = useErp();
+  const { activeTab, setActiveTab, orders, lowStockProducts, companyProfile } = useErp();
 
   // Pending orders badge count
   const pendingOrdersCount = orders.filter((o) => o.status === 'SUBMITTED').length;
@@ -61,10 +62,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onCloseMobile }) => {
         {/* Mobile Header in Drawer */}
         <div className="lg:hidden p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-sm">
-              D
-            </div>
-            <span className="font-bold text-slate-800 text-sm">DistriFlow ERP</span>
+            {companyProfile.logoUrl ? (
+              <img src={companyProfile.logoUrl} alt="Logo" className="w-7 h-7 object-contain rounded-lg" />
+            ) : (
+              <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-sm">
+                {companyProfile.companyName.charAt(0)}
+              </div>
+            )}
+            <span className="font-bold text-slate-800 text-sm truncate max-w-[170px]">{companyProfile.companyName}</span>
           </div>
           <button
             onClick={onCloseMobile}
@@ -269,6 +274,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onCloseMobile }) => {
                     <div className="flex items-center gap-2.5">
                       <Users2 className="w-4 h-4" />
                       <span>Sales Team</span>
+                    </div>
+                  </button>
+                </li>
+                <li>
+                  <button
+                    onClick={() => handleSelect('settings')}
+                    className={navItemClass('settings')}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Building2 className="w-4 h-4" />
+                      <span>Company Settings & Admin</span>
                     </div>
                   </button>
                 </li>

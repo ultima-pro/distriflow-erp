@@ -195,14 +195,14 @@ fun ProductsScreen(
                         OutlinedTextField(
                             value = purchasePriceStr,
                             onValueChange = { purchasePriceStr = it },
-                            label = { Text("Buy Price ($)") },
+                            label = { Text("Buy Price (Rs.)") },
                             modifier = Modifier.weight(1f),
                             singleLine = true
                         )
                         OutlinedTextField(
                             value = sellingPriceStr,
                             onValueChange = { sellingPriceStr = it },
-                            label = { Text("Sell Price ($) *") },
+                            label = { Text("Sell Price (Rs.) *") },
                             modifier = Modifier.weight(1f),
                             singleLine = true
                         )
@@ -393,12 +393,12 @@ fun ProductItemCard(
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     Column {
                         Text("Selling Price", fontSize = 11.sp, color = Slate400)
-                        Text("$${String.format("%.2f", product.sellingPrice)}", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = NavyPrimary)
+                        Text("Rs. ${String.format("%.2f", product.sellingPrice)}", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = NavyPrimary)
                     }
                     if (isOwner) {
                         Column {
                             Text("Cost Price", fontSize = 11.sp, color = Slate400)
-                            Text("$${String.format("%.2f", product.purchasePrice)}", fontSize = 13.sp, color = Slate600)
+                            Text("Rs. ${String.format("%.2f", product.purchasePrice)}", fontSize = 13.sp, color = Slate600)
                         }
                     }
                 }

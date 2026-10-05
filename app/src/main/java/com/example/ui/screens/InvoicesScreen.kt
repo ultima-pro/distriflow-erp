@@ -118,13 +118,13 @@ fun InvoicesScreen(
             text = {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Text("Retailer: ${inv.retailerName}", fontWeight = FontWeight.Bold)
-                    Text("Remaining Balance: $${String.format("%,.2f", inv.remainingBalance)}", color = StatusRed)
+                    Text("Remaining Balance: Rs. ${String.format("%,.2f", inv.remainingBalance)}", color = StatusRed)
                     Spacer(modifier = Modifier.height(10.dp))
 
                     OutlinedTextField(
                         value = amountStr,
                         onValueChange = { amountStr = it },
-                        label = { Text("Amount Paid ($) *") },
+                        label = { Text("Amount Paid (Rs.) *") },
                         modifier = Modifier.fillMaxWidth().testTag("invoice_pay_amount_input"),
                         singleLine = true
                     )
@@ -200,16 +200,16 @@ fun InvoicesScreen(
                     }
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("Total Invoice Amount:", fontWeight = FontWeight.Bold)
-                        Text("$${String.format("%,.2f", inv.totalAmount)}", fontWeight = FontWeight.Bold, color = NavyPrimary)
+                        Text("Rs. ${String.format("%,.2f", inv.totalAmount)}", fontWeight = FontWeight.Bold, color = NavyPrimary)
                     }
                     Spacer(modifier = Modifier.height(6.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("Amount Paid:")
-                        Text("$${String.format("%,.2f", inv.amountPaid)}", color = StatusGreen, fontWeight = FontWeight.SemiBold)
+                        Text("Rs. ${String.format("%,.2f", inv.amountPaid)}", color = StatusGreen, fontWeight = FontWeight.SemiBold)
                     }
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("Remaining Balance:")
-                        Text("$${String.format("%,.2f", inv.remainingBalance)}", color = StatusRed, fontWeight = FontWeight.Bold)
+                        Text("Rs. ${String.format("%,.2f", inv.remainingBalance)}", color = StatusRed, fontWeight = FontWeight.Bold)
                     }
                 }
             },
@@ -258,9 +258,9 @@ fun InvoiceItemCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    Text("Total: $${String.format("%,.2f", invoice.totalAmount)}", fontSize = 12.sp, color = Slate600)
+                    Text("Total: Rs. ${String.format("%,.2f", invoice.totalAmount)}", fontSize = 12.sp, color = Slate600)
                     Text(
-                        "Remaining: $${String.format("%,.2f", invoice.remainingBalance)}",
+                        "Remaining: Rs. ${String.format("%,.2f", invoice.remainingBalance)}",
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp,
                         color = if (invoice.remainingBalance > 0) StatusRed else StatusGreen

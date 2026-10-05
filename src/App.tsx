@@ -18,6 +18,7 @@ import { PaymentsScreen } from './components/payments/PaymentsScreen';
 import { InventoryAuditScreen } from './components/inventory/InventoryAuditScreen';
 import { ReportsScreen } from './components/reports/ReportsScreen';
 import { SalespersonsScreen } from './components/salespersons/SalespersonsScreen';
+import { SettingsScreen } from './components/settings/SettingsScreen';
 
 const MainLayout: React.FC = () => {
   const { isAuthenticated } = useAuth();
@@ -54,6 +55,8 @@ const MainLayout: React.FC = () => {
         return <ReportsScreen />;
       case 'salespersons':
         return <SalespersonsScreen />;
+      case 'settings':
+        return <SettingsScreen />;
       default:
         return <DashboardScreen />;
     }

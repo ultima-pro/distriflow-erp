@@ -21,7 +21,7 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ onToggleMobileSidebar }) => {
   const { currentUser, isOwner, logout } = useAuth();
-  const { setActiveTab, isUsingSupabase, refreshData, isLoading } = useErp();
+  const { setActiveTab, isUsingSupabase, refreshData, isLoading, companyProfile } = useErp();
   const [showDbModal, setShowDbModal] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
 
@@ -42,20 +42,30 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileSidebar }) => {
             onClick={() => setActiveTab('dashboard')}
             className="flex items-center gap-2.5 cursor-pointer select-none"
           >
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-700 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
-              <span className="font-extrabold text-lg tracking-wider">D</span>
-            </div>
+            {companyProfile.logoUrl ? (
+              <img
+                src={companyProfile.logoUrl}
+                alt="Logo"
+                className="w-9 h-9 object-contain rounded-xl border border-slate-200 bg-slate-50 p-0.5 shadow-sm"
+              />
+            ) : (
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-700 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
+                <span className="font-extrabold text-lg tracking-wider">
+                  {companyProfile.companyName.charAt(0)}
+                </span>
+              </div>
+            )}
             <div className="hidden sm:block">
               <div className="flex items-center gap-1.5">
-                <span className="font-black text-slate-900 tracking-tight text-lg leading-none">
-                  Distri<span className="text-blue-600">Flow</span>
+                <span className="font-black text-slate-900 tracking-tight text-lg leading-none truncate max-w-[220px]">
+                  {companyProfile.companyName}
                 </span>
                 <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-1.5 py-0.5 rounded tracking-wide uppercase border border-slate-200">
                   ERP
                 </span>
               </div>
-              <span className="text-[11px] text-slate-400 font-medium leading-none block mt-0.5">
-                Distribution Management
+              <span className="text-[11px] text-slate-400 font-medium leading-none block mt-0.5 truncate max-w-[240px]">
+                {companyProfile.tagline || 'Distribution Management'}
               </span>
             </div>
           </div>
@@ -145,6 +155,19 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileSidebar }) => {
                     Role: {currentUser?.role}
                   </span>
                 </div>
+
+                {isOwner && (
+                  <button
+                    onClick={() => {
+                      setShowUserMenu(false);
+                      setActiveTab('settings');
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2 border-b border-slate-100 font-semibold"
+                  >
+                    <Briefcase className="w-4 h-4 text-purple-600" />
+                    Company Settings & ERP Admin
+                  </button>
+                )}
 
                 <button
                   onClick={() => {

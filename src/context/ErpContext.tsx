@@ -12,6 +12,9 @@ import {
   OrderItem,
   PaymentMethod,
   Purchase,
+  CompanyProfile,
+  DEFAULT_COMPANY_PROFILE,
+  AuditLog,
 } from '../types/erp';
 import { ErpService } from '../services/ErpService';
 import { useAuth } from './AuthContext';
@@ -29,7 +32,8 @@ export type ErpTab =
   | 'payments'
   | 'inventory'
   | 'reports'
-  | 'salespersons';
+  | 'salespersons'
+  | 'settings';
 
 interface ToastMessage {
   id: string;
@@ -54,11 +58,14 @@ interface ErpContextType {
   movements: InventoryMovement[];
   users: User[];
   purchases: Purchase[];
+  companyProfile: CompanyProfile;
+  auditLogs: AuditLog[];
   lowStockProducts: Product[];
   isLoading: boolean;
   refreshData: () => Promise<void>;
+  refreshAuditLogs: () => Promise<void>;
 
-  // Actions
+  // Orders Actions
   createOrder: (
     order: Omit<Order, 'id' | 'createdAt' | 'updatedAt'>,
     items: Omit<OrderItem, 'id' | 'orderId'>[]
@@ -67,10 +74,15 @@ interface ErpContextType {
   rejectOrder: (orderId: number, feedback: string) => Promise<void>;
   requestOrderChanges: (orderId: number, feedback: string) => Promise<void>;
   deleteOrder: (orderId: number) => Promise<void>;
+  restoreOrder: (orderId: number) => Promise<void>;
+  permanentDeleteOrder: (orderId: number) => Promise<void>;
 
+  // Invoices Actions
   generateInvoice: (orderId: number) => Promise<Invoice>;
+  voidInvoice: (invoiceId: number, reason?: string) => Promise<void>;
   deleteInvoice: (invoiceId: number) => Promise<void>;
 
+  // Deliveries Actions
   moveOrderForDelivery: (
     orderId: number,
     options?: {
@@ -84,25 +96,37 @@ interface ErpContextType {
   completeDelivery: (id: number, notes: string) => Promise<void>;
   deleteDelivery: (deliveryId: number) => Promise<void>;
 
+  // Retailers Actions
   saveRetailer: (retailer: Omit<Retailer, 'id' | 'createdAt'> & { id?: number }) => Promise<Retailer>;
-  deleteRetailer: (retailerId: number) => Promise<{ deleted: boolean; deactivated: boolean }>;
+  deleteRetailer: (retailerId: number) => Promise<{ deleted: boolean; deactivated: boolean; message?: string }>;
+  restoreRetailer: (retailerId: number) => Promise<void>;
+  permanentDeleteRetailer: (retailerId: number) => Promise<void>;
 
+  // Products Actions
   saveProduct: (product: Omit<Product, 'id' | 'createdAt'> & { id?: number }) => Promise<Product>;
   adjustStock: (productId: number, delta: number, reason: string) => Promise<void>;
-  deleteProduct: (productId: number) => Promise<{ deleted: boolean; deactivated: boolean }>;
+  deleteProduct: (productId: number) => Promise<{ deleted: boolean; deactivated: boolean; message?: string }>;
+  restoreProduct: (productId: number) => Promise<void>;
+  permanentDeleteProduct: (productId: number) => Promise<void>;
   deleteMovement: (movementId: number) => Promise<void>;
 
+  // Suppliers Actions
   saveSupplier: (supplier: Omit<Supplier, 'id' | 'createdAt'> & { id?: number }) => Promise<Supplier>;
-  deleteSupplier: (supplierId: number) => Promise<{ deleted: boolean; deactivated: boolean }>;
+  deleteSupplier: (supplierId: number) => Promise<{ deleted: boolean; deactivated: boolean; message?: string }>;
+  restoreSupplier: (supplierId: number) => Promise<void>;
+  permanentDeleteSupplier: (supplierId: number) => Promise<void>;
 
+  // Purchases Actions
   recordPurchase: (
     supplierId: number,
     billNumber: string,
     items: { product: Product; quantity: number }[],
     notes: string
   ) => Promise<void>;
+  voidPurchase: (purchaseId: number, reason?: string) => Promise<void>;
   deletePurchase: (purchaseId: number) => Promise<void>;
 
+  // Payments & Collections Actions
   recordRetailerPayment: (
     retailerId: number,
     invoiceId: number | null,
@@ -119,10 +143,17 @@ interface ErpContextType {
     ref: string,
     notes: string
   ) => Promise<void>;
+  reversePayment: (paymentId: number, reason?: string) => Promise<void>;
   deletePayment: (paymentId: number) => Promise<void>;
 
+  // Sales Team Actions
   saveUser: (user: Omit<User, 'id' | 'createdAt'> & { id?: number }) => Promise<User>;
   deleteUser: (userId: number) => Promise<void>;
+  restoreUser: (userId: number) => Promise<void>;
+  permanentDeleteUser: (userId: number) => Promise<void>;
+
+  // Company Profile Actions
+  saveCompanyProfile: (profile: Partial<CompanyProfile>) => Promise<CompanyProfile>;
 
   // Toasts
   toasts: ToastMessage[];
@@ -148,6 +179,8 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(DEFAULT_COMPANY_PROFILE);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -177,6 +210,8 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         loadedMovements,
         loadedUsers,
         loadedPurchases,
+        loadedProfile,
+        loadedAudit,
       ] = await Promise.all([
         ErpService.getRetailers(),
         ErpService.getSuppliers(),
@@ -188,6 +223,8 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ErpService.getMovements(),
         ErpService.getUsers(),
         ErpService.getPurchases(),
+        ErpService.getCompanyProfile(),
+        ErpService.getAuditLogs(100),
       ]);
 
       setRetailers(loadedRetailers);
@@ -200,6 +237,8 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setMovements(loadedMovements);
       setUsers(loadedUsers);
       setPurchases(loadedPurchases);
+      if (loadedProfile) setCompanyProfile(loadedProfile);
+      setAuditLogs(loadedAudit);
     } catch (err: any) {
       showToast(err.message || 'Error loading ERP data', 'error');
     } finally {
@@ -207,9 +246,25 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [showToast]);
 
+  const refreshAuditLogs = useCallback(async () => {
+    try {
+      const logs = await ErpService.getAuditLogs(100);
+      setAuditLogs(logs);
+    } catch (e: any) {
+      console.warn('Could not refresh audit logs:', e.message);
+    }
+  }, []);
+
   useEffect(() => {
     refreshData();
   }, [refreshData]);
+
+  // Synchronize document title with company name
+  useEffect(() => {
+    if (companyProfile.companyName) {
+      document.title = `${companyProfile.companyName} — Distribution Management`;
+    }
+  }, [companyProfile.companyName]);
 
   const lowStockProducts = products.filter((p) => p.currentStock <= p.minStockLevel && p.isActive);
 
@@ -218,13 +273,21 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActiveTab('new-order');
   };
 
-  // Actions
+  const getActor = () => ({
+    userId: currentUser?.cloudId || String(currentUser?.id || ''),
+    userName: currentUser?.fullName || 'User',
+    userRole: currentUser?.role || 'OWNER',
+  });
+
+  // ==========================================
+  // ORDERS ACTIONS
+  // ==========================================
   const createOrder = async (
     order: Omit<Order, 'id' | 'createdAt' | 'updatedAt'>,
     items: Omit<OrderItem, 'id' | 'orderId'>[]
   ) => {
     try {
-      const created = await ErpService.createOrder(order, items);
+      const created = await ErpService.createOrder(order, items, getActor());
       await refreshData();
       showToast(`Order ${created.orderNumber} placed successfully`, 'success');
       return created;
@@ -236,7 +299,7 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const approveOrder = async (orderId: number, feedback?: string) => {
     try {
-      await ErpService.approveOrder(orderId, feedback);
+      await ErpService.approveOrder(orderId, feedback, getActor());
       await refreshData();
       showToast(`Order #${orderId} approved successfully`, 'success');
     } catch (err: any) {
@@ -247,7 +310,7 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const rejectOrder = async (orderId: number, feedback: string) => {
     try {
-      await ErpService.rejectOrder(orderId, feedback);
+      await ErpService.rejectOrder(orderId, feedback, getActor());
       await refreshData();
       showToast(`Order #${orderId} rejected`, 'info');
     } catch (err: any) {
@@ -258,7 +321,7 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const requestOrderChanges = async (orderId: number, feedback: string) => {
     try {
-      await ErpService.requestOrderChanges(orderId, feedback);
+      await ErpService.requestOrderChanges(orderId, feedback, getActor());
       await refreshData();
       showToast(`Requested changes on order #${orderId}`, 'info');
     } catch (err: any) {
@@ -269,20 +332,45 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteOrder = async (orderId: number) => {
     try {
-      await ErpService.deleteOrder(orderId);
+      await ErpService.deleteOrder(orderId, getActor());
       await refreshData();
-      showToast(`Order #${orderId} deleted successfully`, 'success');
+      showToast(`Order #${orderId} archived`, 'success');
     } catch (err: any) {
       showToast(err.message || 'Failed to delete order', 'error');
       throw err;
     }
   };
 
+  const restoreOrder = async (orderId: number) => {
+    try {
+      await ErpService.restoreOrder(orderId, getActor());
+      await refreshData();
+      showToast(`Order #${orderId} restored to draft state`, 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to restore order', 'error');
+      throw err;
+    }
+  };
+
+  const permanentDeleteOrder = async (orderId: number) => {
+    try {
+      await ErpService.permanentDeleteOrder(orderId, getActor());
+      await refreshData();
+      showToast(`Order #${orderId} permanently deleted`, 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to permanently delete order', 'error');
+      throw err;
+    }
+  };
+
+  // ==========================================
+  // INVOICES ACTIONS
+  // ==========================================
   const generateInvoice = async (orderId: number) => {
     try {
-      const invoice = await ErpService.generateInvoiceFromOrder(orderId);
+      const invoice = await ErpService.generateInvoiceFromOrder(orderId, getActor());
       await refreshData();
-      showToast(`Invoice ${invoice.invoiceNumber} generated successfully. Ready to move for delivery.`, 'success');
+      showToast(`Invoice ${invoice.invoiceNumber} generated successfully. Customer balance updated.`, 'success');
       return invoice;
     } catch (err: any) {
       showToast(err.message || 'Failed to generate invoice', 'error');
@@ -290,17 +378,24 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const deleteInvoice = async (invoiceId: number) => {
+  const voidInvoice = async (invoiceId: number, reason?: string) => {
     try {
-      await ErpService.deleteInvoice(invoiceId);
+      await ErpService.voidInvoice(invoiceId, reason, getActor());
       await refreshData();
-      showToast('Invoice deleted and order returned to approved state', 'success');
+      showToast('Invoice voided. Customer balance credited and order returned to approved state.', 'success');
     } catch (err: any) {
-      showToast(err.message || 'Failed to delete invoice', 'error');
+      showToast(err.message || 'Failed to void invoice', 'error');
       throw err;
     }
   };
 
+  const deleteInvoice = async (invoiceId: number) => {
+    return voidInvoice(invoiceId, 'Voided via Invoices screen');
+  };
+
+  // ==========================================
+  // DELIVERIES ACTIONS
+  // ==========================================
   const moveOrderForDelivery = async (
     orderId: number,
     options?: {
@@ -311,9 +406,9 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   ) => {
     try {
-      const delivery = await ErpService.moveOrderForDelivery(orderId, options);
+      const delivery = await ErpService.moveOrderForDelivery(orderId, options, getActor());
       await refreshData();
-      showToast(`Order moved for delivery! Scheduled delivery #${delivery.id} created.`, 'success');
+      showToast(`Delivery #${delivery.id} scheduled for order.`, 'success');
       return delivery;
     } catch (err: any) {
       showToast(err.message || 'Failed to move order for delivery', 'error');
@@ -323,7 +418,7 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const dispatchDelivery = async (id: number, driver: string, phone: string, notes: string) => {
     try {
-      await ErpService.dispatchDelivery(id, driver, phone, notes);
+      await ErpService.dispatchDelivery(id, driver, phone, notes, getActor());
       await refreshData();
       showToast('Delivery marked as dispatched', 'success');
     } catch (err: any) {
@@ -334,7 +429,7 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const completeDelivery = async (id: number, notes: string) => {
     try {
-      await ErpService.completeDelivery(id, notes);
+      await ErpService.completeDelivery(id, notes, getActor());
       await refreshData();
       showToast('Delivery completed! Inventory stock and movements updated', 'success');
     } catch (err: any) {
@@ -354,9 +449,12 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  // ==========================================
+  // RETAILERS ACTIONS
+  // ==========================================
   const saveRetailer = async (retailer: Omit<Retailer, 'id' | 'createdAt'> & { id?: number }) => {
     try {
-      const res = await ErpService.saveRetailer(retailer);
+      const res = await ErpService.saveRetailer(retailer, getActor());
       await refreshData();
       showToast(`Retailer '${res.name}' saved`, 'success');
       return res;
@@ -368,10 +466,10 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteRetailer = async (retailerId: number) => {
     try {
-      const res = await ErpService.deleteRetailer(retailerId);
+      const res = await ErpService.deleteRetailer(retailerId, getActor());
       await refreshData();
       if (res?.deactivated) {
-        showToast('Retailer has transaction history and was deactivated instead of deleted', 'info');
+        showToast(res.message || 'Retailer has historical transactions and was archived.', 'info');
       } else {
         showToast('Retailer deleted successfully', 'success');
       }
@@ -382,9 +480,34 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const restoreRetailer = async (retailerId: number) => {
+    try {
+      await ErpService.restoreRetailer(retailerId, getActor());
+      await refreshData();
+      showToast('Retailer restored to active directory', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to restore retailer', 'error');
+      throw err;
+    }
+  };
+
+  const permanentDeleteRetailer = async (retailerId: number) => {
+    try {
+      await ErpService.permanentDeleteRetailer(retailerId, getActor());
+      await refreshData();
+      showToast('Retailer permanently deleted', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Cannot delete retailer with dependencies', 'error');
+      throw err;
+    }
+  };
+
+  // ==========================================
+  // PRODUCTS ACTIONS
+  // ==========================================
   const saveProduct = async (product: Omit<Product, 'id' | 'createdAt'> & { id?: number }) => {
     try {
-      const res = await ErpService.saveProduct(product);
+      const res = await ErpService.saveProduct(product, getActor());
       await refreshData();
       showToast(`Product '${res.name}' saved`, 'success');
       return res;
@@ -396,12 +519,15 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteProduct = async (productId: number) => {
     try {
-      const res = await ErpService.deleteProduct(productId);
+      const res = await ErpService.deleteProduct(productId, getActor());
       await refreshData();
       if (res?.deactivated) {
-        showToast('Product has historical records and was deactivated instead of deleted', 'info');
+        showToast(
+          res.message || 'This product has historical transactions and cannot be permanently deleted. It has been archived instead.',
+          'info'
+        );
       } else {
-        showToast('Product deleted successfully', 'success');
+        showToast('Product permanently deleted', 'success');
       }
       return res;
     } catch (err: any) {
@@ -410,9 +536,31 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const restoreProduct = async (productId: number) => {
+    try {
+      await ErpService.restoreProduct(productId, getActor());
+      await refreshData();
+      showToast('Product restored to active catalog', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to restore product', 'error');
+      throw err;
+    }
+  };
+
+  const permanentDeleteProduct = async (productId: number) => {
+    try {
+      await ErpService.permanentDeleteProduct(productId, getActor());
+      await refreshData();
+      showToast('Product permanently purged', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Cannot delete product with transaction dependencies', 'error');
+      throw err;
+    }
+  };
+
   const adjustStock = async (productId: number, delta: number, reason: string) => {
     try {
-      await ErpService.recordStockAdjustment(productId, delta, reason);
+      await ErpService.recordStockAdjustment(productId, delta, reason, getActor());
       await refreshData();
       showToast(`Stock adjusted by ${delta > 0 ? '+' : ''}${delta}. Movement logged.`, 'success');
     } catch (err: any) {
@@ -425,16 +573,19 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       await ErpService.deleteMovement(movementId);
       await refreshData();
-      showToast('Movement record deleted', 'success');
+      showToast('Movement adjusted', 'success');
     } catch (err: any) {
-      showToast(err.message || 'Failed to delete movement record', 'error');
+      showToast(err.message || 'Historical inventory movements cannot be deleted directly.', 'error');
       throw err;
     }
   };
 
+  // ==========================================
+  // SUPPLIERS ACTIONS
+  // ==========================================
   const saveSupplier = async (supplier: Omit<Supplier, 'id' | 'createdAt'> & { id?: number }) => {
     try {
-      const res = await ErpService.saveSupplier(supplier);
+      const res = await ErpService.saveSupplier(supplier, getActor());
       await refreshData();
       showToast(`Supplier '${res.name}' saved`, 'success');
       return res;
@@ -446,10 +597,10 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteSupplier = async (supplierId: number) => {
     try {
-      const res = await ErpService.deleteSupplier(supplierId);
+      const res = await ErpService.deleteSupplier(supplierId, getActor());
       await refreshData();
       if (res?.deactivated) {
-        showToast('Supplier has purchase records and was deactivated instead of deleted', 'info');
+        showToast(res.message || 'Supplier has purchase records and was archived.', 'info');
       } else {
         showToast('Supplier deleted successfully', 'success');
       }
@@ -460,6 +611,31 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const restoreSupplier = async (supplierId: number) => {
+    try {
+      await ErpService.restoreSupplier(supplierId, getActor());
+      await refreshData();
+      showToast('Supplier restored to active vendor directory', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to restore supplier', 'error');
+      throw err;
+    }
+  };
+
+  const permanentDeleteSupplier = async (supplierId: number) => {
+    try {
+      await ErpService.permanentDeleteSupplier(supplierId, getActor());
+      await refreshData();
+      showToast('Supplier permanently deleted', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Cannot delete supplier with recorded purchases', 'error');
+      throw err;
+    }
+  };
+
+  // ==========================================
+  // PURCHASES ACTIONS
+  // ==========================================
   const recordPurchase = async (
     supplierId: number,
     billNumber: string,
@@ -467,7 +643,7 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     notes: string
   ) => {
     try {
-      await ErpService.createPurchase(supplierId, billNumber, items, notes);
+      await ErpService.createPurchase(supplierId, billNumber, items, notes, getActor());
       await refreshData();
       showToast(`Purchase bill recorded. Stock & payables updated.`, 'success');
     } catch (err: any) {
@@ -476,17 +652,24 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const deletePurchase = async (purchaseId: number) => {
+  const voidPurchase = async (purchaseId: number, reason?: string) => {
     try {
-      await ErpService.deletePurchase(purchaseId);
+      await ErpService.voidPurchase(purchaseId, reason, getActor());
       await refreshData();
-      showToast('Purchase record deleted', 'success');
+      showToast('Purchase bill voided. Supplier payables adjusted.', 'success');
     } catch (err: any) {
-      showToast(err.message || 'Failed to delete purchase', 'error');
+      showToast(err.message || 'Failed to void purchase bill', 'error');
       throw err;
     }
   };
 
+  const deletePurchase = async (purchaseId: number) => {
+    return voidPurchase(purchaseId, 'Voided via Purchases screen');
+  };
+
+  // ==========================================
+  // PAYMENTS & COLLECTIONS ACTIONS
+  // ==========================================
   const recordRetailerPayment = async (
     retailerId: number,
     invoiceId: number | null,
@@ -509,9 +692,9 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         currentUser.fullName
       );
       await refreshData();
-      showToast(`Payment of ${formatCurrency(amount)} recorded. Customer balance updated.`, 'success');
+      showToast(`Collection of ${formatCurrency(amount)} recorded. Customer balance credited.`, 'success');
     } catch (err: any) {
-      showToast(err.message || 'Failed to record payment collection', 'error');
+      showToast(err.message || 'Failed to record collection', 'error');
       throw err;
     }
   };
@@ -540,27 +723,34 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await refreshData();
       showToast(`Disbursed ${formatCurrency(amount)} to supplier. Payable balance updated.`, 'success');
     } catch (err: any) {
-      showToast(err.message || 'Failed to record supplier disbursement', 'error');
+      showToast(err.message || 'Failed to record supplier payment', 'error');
+      throw err;
+    }
+  };
+
+  const reversePayment = async (paymentId: number, reason?: string) => {
+    try {
+      await ErpService.reversePayment(paymentId, reason, getActor());
+      await refreshData();
+      showToast('Payment reversed. Associated invoice and party balances restored.', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to reverse payment', 'error');
       throw err;
     }
   };
 
   const deletePayment = async (paymentId: number) => {
-    try {
-      await ErpService.deletePayment(paymentId);
-      await refreshData();
-      showToast('Payment record deleted and balances restored', 'success');
-    } catch (err: any) {
-      showToast(err.message || 'Failed to delete payment', 'error');
-      throw err;
-    }
+    return reversePayment(paymentId, 'Reversed via Payments screen');
   };
 
+  // ==========================================
+  // SALES TEAM ACTIONS
+  // ==========================================
   const saveUser = async (user: Omit<User, 'id' | 'createdAt'> & { id?: number }) => {
     try {
-      const res = await ErpService.saveUser(user);
+      const res = await ErpService.saveUser(user, getActor());
       await refreshData();
-      showToast(`User '${res.fullName}' saved`, 'success');
+      showToast(`Sales representative '${res.fullName}' saved`, 'success');
       return res;
     } catch (err: any) {
       showToast(err.message || 'Failed to save sales team member', 'error');
@@ -570,11 +760,48 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteUser = async (userId: number) => {
     try {
-      await ErpService.deleteUser(userId);
+      await ErpService.deleteUser(userId, getActor());
       await refreshData();
-      showToast('Sales representative removed', 'success');
+      showToast('Sales representative deactivated / archived', 'success');
     } catch (err: any) {
-      showToast(err.message || 'Failed to remove representative', 'error');
+      showToast(err.message || 'Failed to deactivate representative', 'error');
+      throw err;
+    }
+  };
+
+  const restoreUser = async (userId: number) => {
+    try {
+      await ErpService.restoreUser(userId, getActor());
+      await refreshData();
+      showToast('Sales representative restored', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to restore representative', 'error');
+      throw err;
+    }
+  };
+
+  const permanentDeleteUser = async (userId: number) => {
+    try {
+      await ErpService.permanentDeleteUser(userId, getActor());
+      await refreshData();
+      showToast('Sales representative permanently removed', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Cannot delete representative with historical records', 'error');
+      throw err;
+    }
+  };
+
+  // ==========================================
+  // COMPANY PROFILE ACTIONS
+  // ==========================================
+  const saveCompanyProfile = async (profile: Partial<CompanyProfile>) => {
+    try {
+      const saved = await ErpService.saveCompanyProfile(profile, getActor());
+      setCompanyProfile(saved);
+      showToast(`Company profile updated: '${saved.companyName}'`, 'success');
+      return saved;
+    } catch (err: any) {
+      showToast(err.message || 'Failed to save company profile', 'error');
       throw err;
     }
   };
@@ -594,15 +821,21 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     movements,
     users,
     purchases,
+    companyProfile,
+    auditLogs,
     lowStockProducts,
     isLoading,
     refreshData,
+    refreshAuditLogs,
     createOrder,
     approveOrder,
     rejectOrder,
     requestOrderChanges,
     deleteOrder,
+    restoreOrder,
+    permanentDeleteOrder,
     generateInvoice,
+    voidInvoice,
     deleteInvoice,
     moveOrderForDelivery,
     dispatchDelivery,
@@ -610,19 +843,30 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     deleteDelivery,
     saveRetailer,
     deleteRetailer,
+    restoreRetailer,
+    permanentDeleteRetailer,
     saveProduct,
     deleteProduct,
+    restoreProduct,
+    permanentDeleteProduct,
     adjustStock,
     deleteMovement,
     saveSupplier,
     deleteSupplier,
+    restoreSupplier,
+    permanentDeleteSupplier,
     recordPurchase,
+    voidPurchase,
     deletePurchase,
     recordRetailerPayment,
     recordSupplierPayment,
+    reversePayment,
     deletePayment,
     saveUser,
     deleteUser,
+    restoreUser,
+    permanentDeleteUser,
+    saveCompanyProfile,
     toasts,
     showToast,
     removeToast,

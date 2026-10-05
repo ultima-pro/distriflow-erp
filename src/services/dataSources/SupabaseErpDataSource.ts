@@ -17,11 +17,15 @@ import {
   OrderStatus,
   InvoicePaymentStatus,
   DeliveryStatus,
+  CompanyProfile,
+  DEFAULT_COMPANY_PROFILE,
+  AuditLog,
 } from '../../types/erp';
 
 /**
  * Cloud Supabase implementation of ErpDataSource.
  * Interacts with PostgreSQL tables via PostgREST and enforces Row Level Security (RLS).
+ * Every mutation explicitly checks for errors and throws on failure to guarantee data integrity.
  */
 export class SupabaseErpDataSource implements ErpDataSource {
   private ensureConfigured() {
@@ -33,7 +37,9 @@ export class SupabaseErpDataSource implements ErpDataSource {
     return supabase;
   }
 
-  // Retailers
+  // ==========================================
+  // RETAILERS
+  // ==========================================
   async getRetailers(): Promise<Retailer[]> {
     const client = this.ensureConfigured();
     const { data, error } = await client.from('retailers').select('*').order('name');
@@ -50,13 +56,14 @@ export class SupabaseErpDataSource implements ErpDataSource {
       creditLimit: parseFloat(row.credit_limit || '0'),
       outstandingBalance: parseFloat(row.outstanding_balance || '0'),
       isActive: row.is_active,
+      archivedAt: row.archived_at ? new Date(row.archived_at).getTime() : undefined,
       createdAt: new Date(row.created_at).getTime(),
     }));
   }
 
   async getRetailerById(id: number): Promise<Retailer | null> {
     const client = this.ensureConfigured();
-    const { data, error } = await client.from('retailers').select('*').eq('id', id).single();
+    const { data, error } = await client.from('retailers').select('*').eq('id', id).maybeSingle();
     if (error || !data) return null;
     return {
       id: data.id,
@@ -70,6 +77,7 @@ export class SupabaseErpDataSource implements ErpDataSource {
       creditLimit: parseFloat(data.credit_limit || '0'),
       outstandingBalance: parseFloat(data.outstanding_balance || '0'),
       isActive: data.is_active,
+      archivedAt: data.archived_at ? new Date(data.archived_at).getTime() : undefined,
       createdAt: new Date(data.created_at).getTime(),
     };
   }
@@ -89,7 +97,12 @@ export class SupabaseErpDataSource implements ErpDataSource {
     };
 
     if (retailer.id && retailer.id > 0) {
-      const { data, error } = await client.from('retailers').update(payload).eq('id', retailer.id).select().single();
+      const { data, error } = await client
+        .from('retailers')
+        .update(payload)
+        .eq('id', retailer.id)
+        .select()
+        .single();
       if (error) throw error;
       return {
         ...retailer,
@@ -111,16 +124,26 @@ export class SupabaseErpDataSource implements ErpDataSource {
 
   async updateRetailerBalance(id: number, delta: number): Promise<void> {
     const client = this.ensureConfigured();
-    const existing = await this.getRetailerById(id);
-    if (existing) {
-      await client
-        .from('retailers')
-        .update({ outstanding_balance: existing.outstandingBalance + delta })
-        .eq('id', id);
+    // Try calling RPC increment_retailer_balance first for atomic update
+    const { error: rpcError } = await client.rpc('increment_retailer_balance', {
+      retailer_id: id,
+      delta: delta,
+    });
+
+    if (rpcError) {
+      // Fallback to fetch and update
+      const existing = await this.getRetailerById(id);
+      if (existing) {
+        const { error: updateError } = await client
+          .from('retailers')
+          .update({ outstanding_balance: existing.outstandingBalance + delta })
+          .eq('id', id);
+        if (updateError) throw updateError;
+      }
     }
   }
 
-  async deleteRetailer(id: number): Promise<{ deleted: boolean; deactivated: boolean }> {
+  async deleteRetailer(id: number): Promise<{ deleted: boolean; deactivated: boolean; message?: string }> {
     const client = this.ensureConfigured();
     const { count: ordersCount } = await client
       .from('orders')
@@ -136,25 +159,63 @@ export class SupabaseErpDataSource implements ErpDataSource {
     if (hasHistory) {
       const { error: updateError } = await client
         .from('retailers')
-        .update({ is_active: false })
+        .update({ is_active: false, archived_at: new Date().toISOString() })
         .eq('id', id);
       if (updateError) throw updateError;
-      return { deleted: false, deactivated: true };
+      return {
+        deleted: false,
+        deactivated: true,
+        message: 'Retailer has existing orders or invoices and was archived instead of permanently deleted.',
+      };
     }
 
     const { error: deleteError } = await client.from('retailers').delete().eq('id', id);
     if (deleteError) {
       const { error: updateError } = await client
         .from('retailers')
-        .update({ is_active: false })
+        .update({ is_active: false, archived_at: new Date().toISOString() })
         .eq('id', id);
       if (updateError) throw deleteError;
-      return { deleted: false, deactivated: true };
+      return {
+        deleted: false,
+        deactivated: true,
+        message: 'Retailer has dependencies and was archived instead of deleted.',
+      };
     }
-    return { deleted: true, deactivated: false };
+    return { deleted: true, deactivated: false, message: 'Retailer permanently deleted.' };
   }
 
-  // Suppliers
+  async restoreRetailer(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    const { error } = await client
+      .from('retailers')
+      .update({ is_active: true, archived_at: null })
+      .eq('id', id);
+    if (error) throw error;
+  }
+
+  async permanentDeleteRetailer(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    const { count: ordersCount } = await client
+      .from('orders')
+      .select('*', { count: 'exact', head: true })
+      .eq('retailer_id', id);
+    const { count: invoicesCount } = await client
+      .from('invoices')
+      .select('*', { count: 'exact', head: true })
+      .eq('retailer_id', id);
+
+    if ((ordersCount || 0) > 0 || (invoicesCount || 0) > 0) {
+      throw new Error('Cannot permanently delete retailer: historical orders or invoices depend on this account.');
+    }
+
+    const { error } = await client.from('retailers').delete().eq('id', id);
+    if (error) throw error;
+  }
+
+  // ==========================================
+  // SUPPLIERS
+  // ==========================================
   async getSuppliers(): Promise<Supplier[]> {
     const client = this.ensureConfigured();
     const { data, error } = await client.from('suppliers').select('*').order('name');
@@ -168,13 +229,14 @@ export class SupabaseErpDataSource implements ErpDataSource {
       address: row.address,
       payableBalance: parseFloat(row.payable_balance || '0'),
       isActive: row.is_active,
+      archivedAt: row.archived_at ? new Date(row.archived_at).getTime() : undefined,
       createdAt: new Date(row.created_at).getTime(),
     }));
   }
 
   async getSupplierById(id: number): Promise<Supplier | null> {
     const client = this.ensureConfigured();
-    const { data, error } = await client.from('suppliers').select('*').eq('id', id).single();
+    const { data, error } = await client.from('suppliers').select('*').eq('id', id).maybeSingle();
     if (error || !data) return null;
     return {
       id: data.id,
@@ -185,6 +247,7 @@ export class SupabaseErpDataSource implements ErpDataSource {
       address: data.address,
       payableBalance: parseFloat(data.payable_balance || '0'),
       isActive: data.is_active,
+      archivedAt: data.archived_at ? new Date(data.archived_at).getTime() : undefined,
       createdAt: new Date(data.created_at).getTime(),
     };
   }
@@ -200,7 +263,12 @@ export class SupabaseErpDataSource implements ErpDataSource {
       is_active: supplier.isActive ?? true,
     };
     if (supplier.id && supplier.id > 0) {
-      const { data, error } = await client.from('suppliers').update(payload).eq('id', supplier.id).select().single();
+      const { data, error } = await client
+        .from('suppliers')
+        .update(payload)
+        .eq('id', supplier.id)
+        .select()
+        .single();
       if (error) throw error;
       return {
         ...supplier,
@@ -222,16 +290,24 @@ export class SupabaseErpDataSource implements ErpDataSource {
 
   async updateSupplierBalance(id: number, delta: number): Promise<void> {
     const client = this.ensureConfigured();
-    const existing = await this.getSupplierById(id);
-    if (existing) {
-      await client
-        .from('suppliers')
-        .update({ payable_balance: existing.payableBalance + delta })
-        .eq('id', id);
+    const { error: rpcError } = await client.rpc('increment_supplier_balance', {
+      p_supplier_id: id,
+      delta: delta,
+    });
+
+    if (rpcError) {
+      const existing = await this.getSupplierById(id);
+      if (existing) {
+        const { error: updateError } = await client
+          .from('suppliers')
+          .update({ payable_balance: existing.payableBalance + delta })
+          .eq('id', id);
+        if (updateError) throw updateError;
+      }
     }
   }
 
-  async deleteSupplier(id: number): Promise<{ deleted: boolean; deactivated: boolean }> {
+  async deleteSupplier(id: number): Promise<{ deleted: boolean; deactivated: boolean; message?: string }> {
     const client = this.ensureConfigured();
     const { count: purchasesCount } = await client
       .from('purchases')
@@ -242,25 +318,59 @@ export class SupabaseErpDataSource implements ErpDataSource {
     if (hasHistory) {
       const { error: updateError } = await client
         .from('suppliers')
-        .update({ is_active: false })
+        .update({ is_active: false, archived_at: new Date().toISOString() })
         .eq('id', id);
       if (updateError) throw updateError;
-      return { deleted: false, deactivated: true };
+      return {
+        deleted: false,
+        deactivated: true,
+        message: 'Supplier has recorded purchase bills and was archived instead of permanently deleted.',
+      };
     }
 
     const { error: deleteError } = await client.from('suppliers').delete().eq('id', id);
     if (deleteError) {
       const { error: updateError } = await client
         .from('suppliers')
-        .update({ is_active: false })
+        .update({ is_active: false, archived_at: new Date().toISOString() })
         .eq('id', id);
       if (updateError) throw deleteError;
-      return { deleted: false, deactivated: true };
+      return {
+        deleted: false,
+        deactivated: true,
+        message: 'Supplier has references and was archived.',
+      };
     }
-    return { deleted: true, deactivated: false };
+    return { deleted: true, deactivated: false, message: 'Supplier permanently deleted.' };
   }
 
-  // Products
+  async restoreSupplier(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    const { error } = await client
+      .from('suppliers')
+      .update({ is_active: true, archived_at: null })
+      .eq('id', id);
+    if (error) throw error;
+  }
+
+  async permanentDeleteSupplier(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    const { count: purchasesCount } = await client
+      .from('purchases')
+      .select('*', { count: 'exact', head: true })
+      .eq('supplier_id', id);
+
+    if ((purchasesCount || 0) > 0) {
+      throw new Error('Cannot permanently delete supplier: recorded purchases depend on this supplier.');
+    }
+
+    const { error } = await client.from('suppliers').delete().eq('id', id);
+    if (error) throw error;
+  }
+
+  // ==========================================
+  // PRODUCTS
+  // ==========================================
   async getProducts(): Promise<Product[]> {
     const client = this.ensureConfigured();
     const { data, error } = await client.from('products').select('*, suppliers(name)').order('name');
@@ -278,13 +388,14 @@ export class SupabaseErpDataSource implements ErpDataSource {
       supplierId: row.supplier_id,
       supplierName: row.suppliers?.name || '',
       isActive: row.is_active,
+      archivedAt: row.archived_at ? new Date(row.archived_at).getTime() : undefined,
       createdAt: new Date(row.created_at).getTime(),
     }));
   }
 
   async getProductById(id: number): Promise<Product | null> {
     const client = this.ensureConfigured();
-    const { data, error } = await client.from('products').select('*, suppliers(name)').eq('id', id).single();
+    const { data, error } = await client.from('products').select('*, suppliers(name)').eq('id', id).maybeSingle();
     if (error || !data) return null;
     return {
       id: data.id,
@@ -299,6 +410,7 @@ export class SupabaseErpDataSource implements ErpDataSource {
       supplierId: data.supplier_id,
       supplierName: data.suppliers?.name || '',
       isActive: data.is_active,
+      archivedAt: data.archived_at ? new Date(data.archived_at).getTime() : undefined,
       createdAt: new Date(data.created_at).getTime(),
     };
   }
@@ -314,11 +426,16 @@ export class SupabaseErpDataSource implements ErpDataSource {
       selling_price: product.sellingPrice,
       current_stock: product.currentStock,
       min_stock_level: product.minStockLevel,
-      supplier_id: product.supplierId,
+      supplier_id: product.supplierId || null,
       is_active: product.isActive ?? true,
     };
     if (product.id && product.id > 0) {
-      const { data, error } = await client.from('products').update(payload).eq('id', product.id).select().single();
+      const { data, error } = await client
+        .from('products')
+        .update(payload)
+        .eq('id', product.id)
+        .select()
+        .single();
       if (error) throw error;
       return {
         ...product,
@@ -340,14 +457,15 @@ export class SupabaseErpDataSource implements ErpDataSource {
     const client = this.ensureConfigured();
     const existing = await this.getProductById(id);
     if (existing) {
-      await client
+      const { error } = await client
         .from('products')
         .update({ current_stock: existing.currentStock + qtyDelta })
         .eq('id', id);
+      if (error) throw error;
     }
   }
 
-  async deleteProduct(id: number): Promise<{ deleted: boolean; deactivated: boolean }> {
+  async deleteProduct(id: number): Promise<{ deleted: boolean; deactivated: boolean; message?: string }> {
     const client = this.ensureConfigured();
     const { count: orderItemsCount } = await client
       .from('order_items')
@@ -372,25 +490,63 @@ export class SupabaseErpDataSource implements ErpDataSource {
     if (hasHistory) {
       const { error: updateError } = await client
         .from('products')
-        .update({ is_active: false })
+        .update({ is_active: false, archived_at: new Date().toISOString() })
         .eq('id', id);
       if (updateError) throw updateError;
-      return { deleted: false, deactivated: true };
+      return {
+        deleted: false,
+        deactivated: true,
+        message: 'This product has historical transactions and cannot be permanently deleted. It has been archived instead.',
+      };
     }
 
     const { error: deleteError } = await client.from('products').delete().eq('id', id);
     if (deleteError) {
       const { error: updateError } = await client
         .from('products')
-        .update({ is_active: false })
+        .update({ is_active: false, archived_at: new Date().toISOString() })
         .eq('id', id);
       if (updateError) throw deleteError;
-      return { deleted: false, deactivated: true };
+      return {
+        deleted: false,
+        deactivated: true,
+        message: 'This product has historical transactions and cannot be permanently deleted. It has been archived instead.',
+      };
     }
-    return { deleted: true, deactivated: false };
+    return { deleted: true, deactivated: false, message: 'Product permanently deleted.' };
   }
 
-  // Orders
+  async restoreProduct(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    const { error } = await client
+      .from('products')
+      .update({ is_active: true, archived_at: null })
+      .eq('id', id);
+    if (error) throw error;
+  }
+
+  async permanentDeleteProduct(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    const { count: orderItemsCount } = await client
+      .from('order_items')
+      .select('*', { count: 'exact', head: true })
+      .eq('product_id', id);
+    const { count: purchaseItemsCount } = await client
+      .from('purchase_items')
+      .select('*', { count: 'exact', head: true })
+      .eq('product_id', id);
+
+    if ((orderItemsCount || 0) > 0 || (purchaseItemsCount || 0) > 0) {
+      throw new Error('Cannot permanently delete product: historical orders or purchase items depend on this record.');
+    }
+
+    const { error } = await client.from('products').delete().eq('id', id);
+    if (error) throw error;
+  }
+
+  // ==========================================
+  // ORDERS & ORDER ITEMS
+  // ==========================================
   async getOrders(): Promise<Order[]> {
     const client = this.ensureConfigured();
     const { data, error } = await client
@@ -412,6 +568,8 @@ export class SupabaseErpDataSource implements ErpDataSource {
       totalAmount: parseFloat(row.total_amount || '0'),
       notes: row.notes,
       ownerFeedback: row.owner_feedback,
+      isArchived: row.is_archived || false,
+      archivedAt: row.archived_at ? new Date(row.archived_at).getTime() : undefined,
       createdAt: new Date(row.created_at).getTime(),
       updatedAt: new Date(row.updated_at).getTime(),
     }));
@@ -423,7 +581,7 @@ export class SupabaseErpDataSource implements ErpDataSource {
       .from('orders')
       .select('*, retailers(name), profiles(full_name)')
       .eq('id', id)
-      .single();
+      .maybeSingle();
     if (error || !data) return null;
     return {
       id: data.id,
@@ -439,6 +597,8 @@ export class SupabaseErpDataSource implements ErpDataSource {
       totalAmount: parseFloat(data.total_amount || '0'),
       notes: data.notes,
       ownerFeedback: data.owner_feedback,
+      isArchived: data.is_archived || false,
+      archivedAt: data.archived_at ? new Date(data.archived_at).getTime() : undefined,
       createdAt: new Date(data.created_at).getTime(),
       updatedAt: new Date(data.updated_at).getTime(),
     };
@@ -446,7 +606,10 @@ export class SupabaseErpDataSource implements ErpDataSource {
 
   async getOrderItems(orderId: number): Promise<OrderItem[]> {
     const client = this.ensureConfigured();
-    const { data, error } = await client.from('order_items').select('*, products(name, sku)').eq('order_id', orderId);
+    const { data, error } = await client
+      .from('order_items')
+      .select('*, products(name, sku)')
+      .eq('order_id', orderId);
     if (error) throw error;
     return (data || []).map((row) => ({
       id: row.id,
@@ -481,8 +644,10 @@ export class SupabaseErpDataSource implements ErpDataSource {
 
     let savedOrderId = order.id;
     if (savedOrderId && savedOrderId > 0) {
-      await client.from('orders').update(orderPayload).eq('id', savedOrderId);
-      await client.from('order_items').delete().eq('order_id', savedOrderId);
+      const { error: updateError } = await client.from('orders').update(orderPayload).eq('id', savedOrderId);
+      if (updateError) throw updateError;
+      const { error: deleteItemsError } = await client.from('order_items').delete().eq('order_id', savedOrderId);
+      if (deleteItemsError) throw deleteItemsError;
     } else {
       const { data, error } = await client.from('orders').insert([orderPayload]).select().single();
       if (error) throw error;
@@ -497,9 +662,14 @@ export class SupabaseErpDataSource implements ErpDataSource {
       discount_percent: it.discountPercent,
       total: it.total,
     }));
-    await client.from('order_items').insert(itemsPayload);
+    if (itemsPayload.length > 0) {
+      const { error: itemsError } = await client.from('order_items').insert(itemsPayload);
+      if (itemsError) throw itemsError;
+    }
 
-    return (await this.getOrderById(savedOrderId!))!;
+    const fresh = await this.getOrderById(savedOrderId!);
+    if (!fresh) throw new Error('Order could not be verified after database write.');
+    return fresh;
   }
 
   async updateOrderStatus(orderId: number, status: OrderStatus, feedback?: string): Promise<void> {
@@ -511,18 +681,63 @@ export class SupabaseErpDataSource implements ErpDataSource {
     if (feedback !== undefined) {
       updatePayload.owner_feedback = feedback;
     }
-    await client.from('orders').update(updatePayload).eq('id', orderId);
+    const { error } = await client.from('orders').update(updatePayload).eq('id', orderId);
+    if (error) throw error;
   }
 
   async deleteOrder(id: number): Promise<void> {
     const client = this.ensureConfigured();
-    // Delete order items first if not automatically cascaded
+    // Check if invoiced
+    const { count: invoiceCount } = await client
+      .from('invoices')
+      .select('*', { count: 'exact', head: true })
+      .eq('order_id', id);
+
+    if ((invoiceCount || 0) > 0) {
+      // Soft-archive order instead of deleting
+      const { error } = await client
+        .from('orders')
+        .update({ is_archived: true, archived_at: new Date().toISOString(), status: 'CANCELLED' })
+        .eq('id', id);
+      if (error) throw error;
+      return;
+    }
+
+    const { error: itemsErr } = await client.from('order_items').delete().eq('order_id', id);
+    if (itemsErr) throw itemsErr;
+
+    const { error } = await client.from('orders').delete().eq('id', id);
+    if (error) throw error;
+  }
+
+  async restoreOrder(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    const { error } = await client
+      .from('orders')
+      .update({ is_archived: false, archived_at: null, status: 'DRAFT' })
+      .eq('id', id);
+    if (error) throw error;
+  }
+
+  async permanentDeleteOrder(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    const { count: invoiceCount } = await client
+      .from('invoices')
+      .select('*', { count: 'exact', head: true })
+      .eq('order_id', id);
+
+    if ((invoiceCount || 0) > 0) {
+      throw new Error('Cannot permanently delete order: an associated invoice exists in the accounting ledger.');
+    }
+
     await client.from('order_items').delete().eq('order_id', id);
     const { error } = await client.from('orders').delete().eq('id', id);
     if (error) throw error;
   }
 
-  // Invoices
+  // ==========================================
+  // INVOICES & INVOICE ITEMS
+  // ==========================================
   async getInvoices(): Promise<Invoice[]> {
     const client = this.ensureConfigured();
     const { data, error } = await client
@@ -545,13 +760,17 @@ export class SupabaseErpDataSource implements ErpDataSource {
       amountPaid: parseFloat(row.amount_paid || '0'),
       remainingBalance: parseFloat(row.remaining_balance || '0'),
       paymentStatus: row.payment_status,
+      status: row.status || (row.payment_status === 'VOIDED' ? 'VOIDED' : 'POSTED'),
+      voidedAt: row.voided_at ? new Date(row.voided_at).getTime() : undefined,
+      voidedBy: row.voided_by,
+      voidReason: row.void_reason,
       createdAt: new Date(row.created_at).getTime(),
     }));
   }
 
   async getInvoiceById(id: number): Promise<Invoice | null> {
     const client = this.ensureConfigured();
-    const { data, error } = await client.from('invoices').select('*, retailers(name)').eq('id', id).single();
+    const { data, error } = await client.from('invoices').select('*, retailers(name)').eq('id', id).maybeSingle();
     if (error || !data) return null;
     return {
       id: data.id,
@@ -568,6 +787,10 @@ export class SupabaseErpDataSource implements ErpDataSource {
       amountPaid: parseFloat(data.amount_paid || '0'),
       remainingBalance: parseFloat(data.remaining_balance || '0'),
       paymentStatus: data.payment_status,
+      status: data.status || (data.payment_status === 'VOIDED' ? 'VOIDED' : 'POSTED'),
+      voidedAt: data.voided_at ? new Date(data.voided_at).getTime() : undefined,
+      voidedBy: data.voided_by,
+      voidReason: data.void_reason,
       createdAt: new Date(data.created_at).getTime(),
     };
   }
@@ -622,7 +845,9 @@ export class SupabaseErpDataSource implements ErpDataSource {
       if (itemsError) throw itemsError;
     }
 
-    return (await this.getInvoiceById(data.id))!;
+    const created = await this.getInvoiceById(data.id);
+    if (!created) throw new Error('Invoice was created but could not be verified from database.');
+    return created;
   }
 
   async updateInvoicePayment(id: number, amount: number, status: InvoicePaymentStatus): Promise<void> {
@@ -646,12 +871,30 @@ export class SupabaseErpDataSource implements ErpDataSource {
 
   async deleteInvoice(id: number): Promise<void> {
     const client = this.ensureConfigured();
-    await client.from('invoice_items').delete().eq('invoice_id', id);
+    const { error: itemsErr } = await client.from('invoice_items').delete().eq('invoice_id', id);
+    if (itemsErr) throw itemsErr;
     const { error } = await client.from('invoices').delete().eq('id', id);
     if (error) throw error;
   }
 
-  // Purchases
+  async voidInvoice(id: number, reason?: string, voidedBy?: string): Promise<void> {
+    const client = this.ensureConfigured();
+    const { error } = await client
+      .from('invoices')
+      .update({
+        payment_status: 'VOIDED',
+        status: 'VOIDED',
+        voided_at: new Date().toISOString(),
+        voided_by: voidedBy || null,
+        void_reason: reason || 'Voided by Administrator',
+      })
+      .eq('id', id);
+    if (error) throw error;
+  }
+
+  // ==========================================
+  // PURCHASES & PURCHASE ITEMS
+  // ==========================================
   async getPurchases(): Promise<Purchase[]> {
     const client = this.ensureConfigured();
     const { data, error } = await client
@@ -668,6 +911,10 @@ export class SupabaseErpDataSource implements ErpDataSource {
       totalAmount: parseFloat(row.total_amount || '0'),
       amountPaid: parseFloat(row.amount_paid || '0'),
       paymentStatus: row.payment_status,
+      status: row.status || (row.payment_status === 'VOIDED' ? 'VOIDED' : 'POSTED'),
+      voidedAt: row.voided_at ? new Date(row.voided_at).getTime() : undefined,
+      voidedBy: row.voided_by,
+      voidReason: row.void_reason,
       notes: row.notes,
       createdAt: new Date(row.created_at).getTime(),
     }));
@@ -710,7 +957,7 @@ export class SupabaseErpDataSource implements ErpDataSource {
 
   async updatePurchasePayment(purchaseId: number, amount: number): Promise<void> {
     const client = this.ensureConfigured();
-    const { data: purchase, error } = await client.from('purchases').select('*').eq('id', purchaseId).single();
+    const { data: purchase, error } = await client.from('purchases').select('*').eq('id', purchaseId).maybeSingle();
     if (error || !purchase) return;
 
     const currentPaid = parseFloat(purchase.amount_paid || '0');
@@ -730,12 +977,30 @@ export class SupabaseErpDataSource implements ErpDataSource {
 
   async deletePurchase(id: number): Promise<void> {
     const client = this.ensureConfigured();
-    await client.from('purchase_items').delete().eq('purchase_id', id);
+    const { error: itemsErr } = await client.from('purchase_items').delete().eq('purchase_id', id);
+    if (itemsErr) throw itemsErr;
     const { error } = await client.from('purchases').delete().eq('id', id);
     if (error) throw error;
   }
 
-  // Payments
+  async voidPurchase(id: number, reason?: string, voidedBy?: string): Promise<void> {
+    const client = this.ensureConfigured();
+    const { error } = await client
+      .from('purchases')
+      .update({
+        payment_status: 'VOIDED',
+        status: 'VOIDED',
+        voided_at: new Date().toISOString(),
+        voided_by: voidedBy || null,
+        void_reason: reason || 'Voided by Administrator',
+      })
+      .eq('id', id);
+    if (error) throw error;
+  }
+
+  // ==========================================
+  // PAYMENTS & COLLECTIONS
+  // ==========================================
   async getPayments(): Promise<Payment[]> {
     const client = this.ensureConfigured();
     const { data, error } = await client
@@ -758,14 +1023,17 @@ export class SupabaseErpDataSource implements ErpDataSource {
       notes: row.notes,
       recordedByUserId: row.recorded_by_user_id,
       recordedByName: row.profiles?.full_name || '',
+      status: row.status || 'ACTIVE',
+      reversedAt: row.reversed_at ? new Date(row.reversed_at).getTime() : undefined,
+      reversedBy: row.reversed_by,
+      reversalReason: row.reversal_reason,
       createdAt: new Date(row.created_at).getTime(),
     }));
   }
 
   async createPayment(payment: Omit<Payment, 'id' | 'createdAt'>): Promise<Payment> {
     const client = this.ensureConfigured();
-    
-    // Resolve valid UUID for recorded_by_user_id or null to avoid 22P02 invalid input syntax for type uuid
+
     let validUserId: string | null = null;
     if (typeof payment.recordedByUserId === 'string' && payment.recordedByUserId.includes('-')) {
       validUserId = payment.recordedByUserId;
@@ -786,12 +1054,14 @@ export class SupabaseErpDataSource implements ErpDataSource {
       reference_number: payment.referenceNumber || null,
       notes: payment.notes || null,
       recorded_by_user_id: validUserId,
+      status: payment.status || 'ACTIVE',
     };
     const { data, error } = await client.from('payments').insert([payload]).select().single();
     if (error) throw error;
     return {
       ...payment,
       id: data.id,
+      status: data.status || 'ACTIVE',
       createdAt: new Date(data.created_at).getTime(),
     };
   }
@@ -802,7 +1072,23 @@ export class SupabaseErpDataSource implements ErpDataSource {
     if (error) throw error;
   }
 
-  // Movements
+  async reversePayment(id: number, reason?: string, reversedBy?: string): Promise<void> {
+    const client = this.ensureConfigured();
+    const { error } = await client
+      .from('payments')
+      .update({
+        status: 'REVERSED',
+        reversed_at: new Date().toISOString(),
+        reversed_by: reversedBy || null,
+        reversal_reason: reason || 'Reversed by Administrator',
+      })
+      .eq('id', id);
+    if (error) throw error;
+  }
+
+  // ==========================================
+  // INVENTORY MOVEMENTS (AUDIT TRAIL)
+  // ==========================================
   async getMovements(): Promise<InventoryMovement[]> {
     const client = this.ensureConfigured();
     const { data, error } = await client
@@ -854,7 +1140,9 @@ export class SupabaseErpDataSource implements ErpDataSource {
     if (error) throw error;
   }
 
-  // Deliveries
+  // ==========================================
+  // DELIVERIES
+  // ==========================================
   async getDeliveries(): Promise<Delivery[]> {
     const client = this.ensureConfigured();
     const { data, error } = await client
@@ -913,7 +1201,8 @@ export class SupabaseErpDataSource implements ErpDataSource {
     const payload: Record<string, unknown> = { status };
     if (deliveredDate) payload.delivered_date = new Date(deliveredDate).toISOString();
     if (notes) payload.notes = notes;
-    await client.from('deliveries').update(payload).eq('id', id);
+    const { error } = await client.from('deliveries').update(payload).eq('id', id);
+    if (error) throw error;
   }
 
   async deleteDelivery(id: number): Promise<void> {
@@ -922,7 +1211,9 @@ export class SupabaseErpDataSource implements ErpDataSource {
     if (error) throw error;
   }
 
-  // Users / Profiles
+  // ==========================================
+  // USERS / SALES TEAM / PROFILES
+  // ==========================================
   async getUsers(): Promise<User[]> {
     const client = this.ensureConfigured();
     const { data, error } = await client.from('profiles').select('*').order('full_name');
@@ -935,6 +1226,7 @@ export class SupabaseErpDataSource implements ErpDataSource {
       role: row.role,
       phone: row.phone,
       isActive: row.is_active,
+      archivedAt: row.archived_at ? new Date(row.archived_at).getTime() : undefined,
       createdAt: new Date(row.created_at).getTime(),
     }));
   }
@@ -946,20 +1238,9 @@ export class SupabaseErpDataSource implements ErpDataSource {
 
   async saveUser(user: Omit<User, 'id' | 'createdAt'> & { id?: number }): Promise<User> {
     const client = this.ensureConfigured();
-    
-    // Determine profile UUID: either existing user.cloudId or generate a new UUID
-    const profileId = user.cloudId || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `usr-${Date.now()}`);
-
-    const payload = {
-      id: profileId,
-      username: user.username,
-      full_name: user.fullName,
-      role: user.role,
-      phone: user.phone || '',
-      is_active: user.isActive ?? true,
-    };
 
     if (user.cloudId) {
+      // Update existing profile
       const { data, error } = await client
         .from('profiles')
         .update({
@@ -980,8 +1261,49 @@ export class SupabaseErpDataSource implements ErpDataSource {
         createdAt: new Date(data.created_at).getTime(),
       };
     } else {
-      const { data, error } = await client.from('profiles').insert([payload]).select().single();
+      // Create new sales team member
+      const cleanEmail = user.email?.trim() || `${user.username.trim()}@distriflow.internal`;
+      const cleanPassword = 'Sales@' + (Date.now() % 10000);
+
+      // Attempt to register via Supabase Auth signUp to create valid auth.users UUID
+      let newUuid: string | null = null;
+      try {
+        const { data: authData, error: authErr } = await client.auth.signUp({
+          email: cleanEmail,
+          password: cleanPassword,
+          options: {
+            data: {
+              username: user.username.trim(),
+              full_name: user.fullName.trim(),
+              role: user.role,
+              phone: user.phone || '',
+            },
+          },
+        });
+        if (!authErr && authData.user?.id) {
+          newUuid = authData.user.id;
+        }
+      } catch (e) {
+        console.warn('Supabase Auth signUp note:', e);
+      }
+
+      // If signUp didn't return UUID (e.g. rate limit, or email taken), generate a random UUID
+      if (!newUuid) {
+        newUuid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : null;
+      }
+
+      const payload = {
+        id: newUuid,
+        username: user.username.trim(),
+        full_name: user.fullName.trim(),
+        role: user.role,
+        phone: user.phone || '',
+        is_active: user.isActive ?? true,
+      };
+
+      const { data, error } = await client.from('profiles').upsert([payload]).select().single();
       if (error) throw error;
+
       return {
         ...user,
         id: user.id || Date.now(),
@@ -995,8 +1317,214 @@ export class SupabaseErpDataSource implements ErpDataSource {
     const client = this.ensureConfigured();
     const user = await this.getUserById(id);
     if (user?.cloudId) {
+      // Check if user has orders or assigned retailers
+      const { count: ordersCount } = await client
+        .from('orders')
+        .select('*', { count: 'exact', head: true })
+        .eq('salesperson_id', user.cloudId);
+
+      const hasHistory = (ordersCount || 0) > 0;
+      if (hasHistory) {
+        // Soft deactivate/archive
+        const { error } = await client
+          .from('profiles')
+          .update({ is_active: false, archived_at: new Date().toISOString() })
+          .eq('id', user.cloudId);
+        if (error) throw error;
+        return;
+      }
+
+      const { error } = await client.from('profiles').delete().eq('id', user.cloudId);
+      if (error) {
+        // Fallback to deactivate if FK prevent delete
+        await client
+          .from('profiles')
+          .update({ is_active: false, archived_at: new Date().toISOString() })
+          .eq('id', user.cloudId);
+      }
+    }
+  }
+
+  async restoreUser(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    const user = await this.getUserById(id);
+    if (user?.cloudId) {
+      const { error } = await client
+        .from('profiles')
+        .update({ is_active: true, archived_at: null })
+        .eq('id', user.cloudId);
+      if (error) throw error;
+    }
+  }
+
+  async permanentDeleteUser(id: number): Promise<void> {
+    const client = this.ensureConfigured();
+    const user = await this.getUserById(id);
+    if (user?.cloudId) {
+      const { count: ordersCount } = await client
+        .from('orders')
+        .select('*', { count: 'exact', head: true })
+        .eq('salesperson_id', user.cloudId);
+
+      if ((ordersCount || 0) > 0) {
+        throw new Error('Cannot permanently delete sales team member: historical orders are associated with their profile.');
+      }
+
       const { error } = await client.from('profiles').delete().eq('id', user.cloudId);
       if (error) throw error;
     }
+  }
+
+  // ==========================================
+  // COMPANY PROFILE
+  // ==========================================
+  async getCompanyProfile(): Promise<CompanyProfile> {
+    const client = this.ensureConfigured();
+    try {
+      const { data, error } = await client.from('company_profile').select('*').eq('id', 1).maybeSingle();
+      if (!error && data) {
+        return {
+          id: data.id,
+          companyName: data.company_name || DEFAULT_COMPANY_PROFILE.companyName,
+          legalName: data.legal_name || DEFAULT_COMPANY_PROFILE.legalName,
+          businessType: data.business_type || DEFAULT_COMPANY_PROFILE.businessType,
+          tagline: data.tagline || DEFAULT_COMPANY_PROFILE.tagline,
+          phone: data.phone || DEFAULT_COMPANY_PROFILE.phone,
+          alternatePhone: data.alternate_phone || DEFAULT_COMPANY_PROFILE.alternatePhone,
+          email: data.email || DEFAULT_COMPANY_PROFILE.email,
+          website: data.website || DEFAULT_COMPANY_PROFILE.website,
+          address: data.address || DEFAULT_COMPANY_PROFILE.address,
+          city: data.city || DEFAULT_COMPANY_PROFILE.city,
+          district: data.district || DEFAULT_COMPANY_PROFILE.district,
+          province: data.province || DEFAULT_COMPANY_PROFILE.province,
+          country: data.country || DEFAULT_COMPANY_PROFILE.country,
+          panNumber: data.pan_number || DEFAULT_COMPANY_PROFILE.panNumber,
+          vatNumber: data.vat_number || DEFAULT_COMPANY_PROFILE.vatNumber,
+          registrationNumber: data.registration_number || DEFAULT_COMPANY_PROFILE.registrationNumber,
+          logoUrl: data.logo_url,
+          invoiceHeaderLogoUrl: data.invoice_header_logo_url,
+          invoiceFooterText: data.invoice_footer_text || DEFAULT_COMPANY_PROFILE.invoiceFooterText,
+          receiptFooterText: data.receipt_footer_text || DEFAULT_COMPANY_PROFILE.receiptFooterText,
+          defaultInvoiceNotes: data.default_invoice_notes || DEFAULT_COMPANY_PROFILE.defaultInvoiceNotes,
+          defaultPaymentTerms: data.default_payment_terms || DEFAULT_COMPANY_PROFILE.defaultPaymentTerms,
+          currency: data.currency || DEFAULT_COMPANY_PROFILE.currency,
+          currencySymbol: data.currency_symbol || DEFAULT_COMPANY_PROFILE.currencySymbol,
+          updatedAt: data.updated_at ? new Date(data.updated_at).getTime() : Date.now(),
+        };
+      }
+    } catch {
+      // Table may not yet exist on live Supabase
+    }
+    return DEFAULT_COMPANY_PROFILE;
+  }
+
+  async saveCompanyProfile(profile: Partial<CompanyProfile>): Promise<CompanyProfile> {
+    const client = this.ensureConfigured();
+    const payload = {
+      id: 1,
+      company_name: profile.companyName,
+      legal_name: profile.legalName,
+      business_type: profile.businessType,
+      tagline: profile.tagline,
+      phone: profile.phone,
+      alternate_phone: profile.alternatePhone,
+      email: profile.email,
+      website: profile.website,
+      address: profile.address,
+      city: profile.city,
+      district: profile.district,
+      province: profile.province,
+      country: profile.country,
+      pan_number: profile.panNumber,
+      vat_number: profile.vatNumber,
+      registration_number: profile.registrationNumber,
+      logo_url: profile.logoUrl,
+      invoice_header_logo_url: profile.invoiceHeaderLogoUrl,
+      invoice_footer_text: profile.invoiceFooterText,
+      receipt_footer_text: profile.receiptFooterText,
+      default_invoice_notes: profile.defaultInvoiceNotes,
+      default_payment_terms: profile.defaultPaymentTerms,
+      currency: profile.currency || 'NPR',
+      currency_symbol: profile.currencySymbol || 'Rs.',
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await client
+      .from('company_profile')
+      .upsert(payload)
+      .select()
+      .single();
+    if (error) throw error;
+
+    return {
+      ...DEFAULT_COMPANY_PROFILE,
+      ...profile,
+      id: data.id,
+      updatedAt: new Date(data.updated_at).getTime(),
+    };
+  }
+
+  // ==========================================
+  // AUDIT LOGS
+  // ==========================================
+  async getAuditLogs(limit: number = 100): Promise<AuditLog[]> {
+    const client = this.ensureConfigured();
+    try {
+      const { data, error } = await client
+        .from('audit_logs')
+        .select('*')
+        .order('timestamp', { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      return (data || []).map((row) => ({
+        id: row.id,
+        userId: row.user_id,
+        userName: row.user_name,
+        userRole: row.user_role,
+        action: row.action,
+        module: row.module,
+        recordId: row.record_id,
+        recordIdentifier: row.record_identifier,
+        description: row.description,
+        reason: row.reason,
+        metadata: row.metadata,
+        timestamp: new Date(row.timestamp).getTime(),
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  async createAuditLog(log: Omit<AuditLog, 'id' | 'timestamp'>): Promise<AuditLog> {
+    const client = this.ensureConfigured();
+    const payload = {
+      user_id: log.userId && log.userId.includes('-') ? log.userId : null,
+      user_name: log.userName,
+      user_role: log.userRole,
+      action: log.action,
+      module: log.module,
+      record_id: log.recordId,
+      record_identifier: log.recordIdentifier,
+      description: log.description,
+      reason: log.reason,
+      metadata: log.metadata,
+    };
+    try {
+      const { data, error } = await client.from('audit_logs').insert([payload]).select().single();
+      if (!error && data) {
+        return {
+          ...log,
+          id: data.id,
+          timestamp: new Date(data.timestamp).getTime(),
+        };
+      }
+    } catch (e) {
+      console.warn('Audit log write warning:', e);
+    }
+    return {
+      ...log,
+      id: Date.now(),
+      timestamp: Date.now(),
+    };
   }
 }

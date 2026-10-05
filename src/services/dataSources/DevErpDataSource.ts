@@ -16,6 +16,9 @@ import {
   OrderStatus,
   InvoicePaymentStatus,
   DeliveryStatus,
+  CompanyProfile,
+  DEFAULT_COMPANY_PROFILE,
+  AuditLog,
 } from '../../types/erp';
 import {
   INITIAL_DEMO_USERS,
@@ -31,25 +34,69 @@ import {
 } from '../../data/demoSeedData';
 
 /**
- * In-memory development data source.
+ * In-memory development data source with localStorage persistence.
  * Strictly used when Supabase is not connected.
  */
 export class DevErpDataSource implements ErpDataSource {
-  private users: User[] = [...INITIAL_DEMO_USERS];
-  private suppliers: Supplier[] = [...INITIAL_DEMO_SUPPLIERS];
-  private products: Product[] = [...INITIAL_DEMO_PRODUCTS];
-  private retailers: Retailer[] = [...INITIAL_DEMO_RETAILERS];
-  private orders: Order[] = [...INITIAL_DEMO_ORDERS];
-  private orderItems: OrderItem[] = [...INITIAL_DEMO_ORDER_ITEMS];
-  private invoices: Invoice[] = [...INITIAL_DEMO_INVOICES];
-  private invoiceItems: InvoiceItem[] = [];
-  private purchases: Purchase[] = [];
-  private purchaseItems: PurchaseItem[] = [];
-  private payments: Payment[] = [...INITIAL_DEMO_PAYMENTS];
-  private movements: InventoryMovement[] = [...INITIAL_DEMO_MOVEMENTS];
-  private deliveries: Delivery[] = [...INITIAL_DEMO_DELIVERIES];
+  private users: User[];
+  private suppliers: Supplier[];
+  private products: Product[];
+  private retailers: Retailer[];
+  private orders: Order[];
+  private orderItems: OrderItem[];
+  private invoices: Invoice[];
+  private invoiceItems: InvoiceItem[];
+  private purchases: Purchase[];
+  private purchaseItems: PurchaseItem[];
+  private payments: Payment[];
+  private movements: InventoryMovement[];
+  private deliveries: Delivery[];
+  private companyProfile: CompanyProfile;
+  private auditLogs: AuditLog[];
 
-  // Retailers
+  constructor() {
+    this.users = this.loadLocal('distriflow_users', INITIAL_DEMO_USERS);
+    this.suppliers = this.loadLocal('distriflow_suppliers', INITIAL_DEMO_SUPPLIERS);
+    this.products = this.loadLocal('distriflow_products', INITIAL_DEMO_PRODUCTS);
+    this.retailers = this.loadLocal('distriflow_retailers', INITIAL_DEMO_RETAILERS);
+    this.orders = this.loadLocal('distriflow_orders', INITIAL_DEMO_ORDERS);
+    this.orderItems = this.loadLocal('distriflow_order_items', INITIAL_DEMO_ORDER_ITEMS);
+    this.invoices = this.loadLocal('distriflow_invoices', INITIAL_DEMO_INVOICES);
+    this.invoiceItems = this.loadLocal('distriflow_invoice_items', []);
+    this.purchases = this.loadLocal('distriflow_purchases', []);
+    this.purchaseItems = this.loadLocal('distriflow_purchase_items', []);
+    this.payments = this.loadLocal('distriflow_payments', INITIAL_DEMO_PAYMENTS);
+    this.movements = this.loadLocal('distriflow_movements', INITIAL_DEMO_MOVEMENTS);
+    this.deliveries = this.loadLocal('distriflow_deliveries', INITIAL_DEMO_DELIVERIES);
+    this.companyProfile = this.loadLocal('distriflow_company_profile', DEFAULT_COMPANY_PROFILE);
+    this.auditLogs = this.loadLocal('distriflow_audit_logs', []);
+  }
+
+  private loadLocal<T>(key: string, fallback: T): T {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const item = window.localStorage.getItem(key);
+        if (item) return JSON.parse(item);
+      }
+    } catch {
+      // Fallback
+    }
+    return fallback;
+  }
+
+  private saveLocal(key: string, data: unknown) {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem(key, JSON.stringify(data));
+      }
+    } catch {
+      // Ignore storage quota errors
+    }
+  }
+
+  // ==========================================
+  // RETAILERS
+  // ==========================================
   async getRetailers(): Promise<Retailer[]> {
     return [...this.retailers];
   }
@@ -68,6 +115,7 @@ export class DevErpDataSource implements ErpDataSource {
           id: retailer.id,
         };
         this.retailers[idx] = updated;
+        this.saveLocal('distriflow_retailers', this.retailers);
         return updated;
       }
     }
@@ -75,12 +123,13 @@ export class DevErpDataSource implements ErpDataSource {
     const created: Retailer = {
       ...retailer,
       id: newId,
-      creditLimit: retailer.creditLimit ?? 2500,
+      creditLimit: retailer.creditLimit ?? 5000,
       outstandingBalance: retailer.outstandingBalance ?? 0,
       isActive: retailer.isActive ?? true,
       createdAt: Date.now(),
     };
     this.retailers.push(created);
+    this.saveLocal('distriflow_retailers', this.retailers);
     return created;
   }
 
@@ -88,21 +137,57 @@ export class DevErpDataSource implements ErpDataSource {
     const retailer = this.retailers.find((r) => r.id === id);
     if (retailer) {
       retailer.outstandingBalance += delta;
+      this.saveLocal('distriflow_retailers', this.retailers);
     }
   }
 
-  async deleteRetailer(id: number): Promise<{ deleted: boolean; deactivated: boolean }> {
-    const hasOrders = this.orders.some((o) => o.retailerId === id);
-    if (hasOrders) {
+  async deleteRetailer(id: number): Promise<{ deleted: boolean; deactivated: boolean; message?: string }> {
+    const hasHistory =
+      this.orders.some((o) => o.retailerId === id) ||
+      this.invoices.some((i) => i.retailerId === id);
+
+    if (hasHistory) {
       const retailer = this.retailers.find((r) => r.id === id);
-      if (retailer) retailer.isActive = false;
-      return { deleted: false, deactivated: true };
+      if (retailer) {
+        retailer.isActive = false;
+        retailer.archivedAt = Date.now();
+      }
+      this.saveLocal('distriflow_retailers', this.retailers);
+      return {
+        deleted: false,
+        deactivated: true,
+        message: 'Retailer has existing orders or invoices and was archived instead of deleted.',
+      };
+    }
+
+    this.retailers = this.retailers.filter((r) => r.id !== id);
+    this.saveLocal('distriflow_retailers', this.retailers);
+    return { deleted: true, deactivated: false, message: 'Retailer permanently deleted.' };
+  }
+
+  async restoreRetailer(id: number): Promise<void> {
+    const retailer = this.retailers.find((r) => r.id === id);
+    if (retailer) {
+      retailer.isActive = true;
+      retailer.archivedAt = undefined;
+      this.saveLocal('distriflow_retailers', this.retailers);
+    }
+  }
+
+  async permanentDeleteRetailer(id: number): Promise<void> {
+    const hasHistory =
+      this.orders.some((o) => o.retailerId === id) ||
+      this.invoices.some((i) => i.retailerId === id);
+    if (hasHistory) {
+      throw new Error('Cannot permanently delete retailer: historical orders or invoices depend on this account.');
     }
     this.retailers = this.retailers.filter((r) => r.id !== id);
-    return { deleted: true, deactivated: false };
+    this.saveLocal('distriflow_retailers', this.retailers);
   }
 
-  // Suppliers
+  // ==========================================
+  // SUPPLIERS
+  // ==========================================
   async getSuppliers(): Promise<Supplier[]> {
     return [...this.suppliers];
   }
@@ -121,6 +206,7 @@ export class DevErpDataSource implements ErpDataSource {
           id: supplier.id,
         };
         this.suppliers[idx] = updated;
+        this.saveLocal('distriflow_suppliers', this.suppliers);
         return updated;
       }
     }
@@ -128,11 +214,12 @@ export class DevErpDataSource implements ErpDataSource {
     const created: Supplier = {
       ...supplier,
       id: newId,
-      payableBalance: supplier.payableBalance ?? 0,
+      payableBalance: 0,
       isActive: supplier.isActive ?? true,
       createdAt: Date.now(),
     };
     this.suppliers.push(created);
+    this.saveLocal('distriflow_suppliers', this.suppliers);
     return created;
   }
 
@@ -140,21 +227,51 @@ export class DevErpDataSource implements ErpDataSource {
     const supplier = this.suppliers.find((s) => s.id === id);
     if (supplier) {
       supplier.payableBalance += delta;
+      this.saveLocal('distriflow_suppliers', this.suppliers);
     }
   }
 
-  async deleteSupplier(id: number): Promise<{ deleted: boolean; deactivated: boolean }> {
+  async deleteSupplier(id: number): Promise<{ deleted: boolean; deactivated: boolean; message?: string }> {
     const hasPurchases = this.purchases.some((p) => p.supplierId === id);
     if (hasPurchases) {
       const supplier = this.suppliers.find((s) => s.id === id);
-      if (supplier) supplier.isActive = false;
-      return { deleted: false, deactivated: true };
+      if (supplier) {
+        supplier.isActive = false;
+        supplier.archivedAt = Date.now();
+      }
+      this.saveLocal('distriflow_suppliers', this.suppliers);
+      return {
+        deleted: false,
+        deactivated: true,
+        message: 'Supplier has purchase bills and was archived instead of deleted.',
+      };
     }
     this.suppliers = this.suppliers.filter((s) => s.id !== id);
-    return { deleted: true, deactivated: false };
+    this.saveLocal('distriflow_suppliers', this.suppliers);
+    return { deleted: true, deactivated: false, message: 'Supplier permanently deleted.' };
   }
 
-  // Products
+  async restoreSupplier(id: number): Promise<void> {
+    const supplier = this.suppliers.find((s) => s.id === id);
+    if (supplier) {
+      supplier.isActive = true;
+      supplier.archivedAt = undefined;
+      this.saveLocal('distriflow_suppliers', this.suppliers);
+    }
+  }
+
+  async permanentDeleteSupplier(id: number): Promise<void> {
+    const hasPurchases = this.purchases.some((p) => p.supplierId === id);
+    if (hasPurchases) {
+      throw new Error('Cannot permanently delete supplier: recorded purchases depend on this supplier.');
+    }
+    this.suppliers = this.suppliers.filter((s) => s.id !== id);
+    this.saveLocal('distriflow_suppliers', this.suppliers);
+  }
+
+  // ==========================================
+  // PRODUCTS
+  // ==========================================
   async getProducts(): Promise<Product[]> {
     return [...this.products];
   }
@@ -173,6 +290,7 @@ export class DevErpDataSource implements ErpDataSource {
           id: product.id,
         };
         this.products[idx] = updated;
+        this.saveLocal('distriflow_products', this.products);
         return updated;
       }
     }
@@ -184,6 +302,7 @@ export class DevErpDataSource implements ErpDataSource {
       createdAt: Date.now(),
     };
     this.products.push(created);
+    this.saveLocal('distriflow_products', this.products);
     return created;
   }
 
@@ -191,10 +310,11 @@ export class DevErpDataSource implements ErpDataSource {
     const product = this.products.find((p) => p.id === id);
     if (product) {
       product.currentStock += qtyDelta;
+      this.saveLocal('distriflow_products', this.products);
     }
   }
 
-  async deleteProduct(id: number): Promise<{ deleted: boolean; deactivated: boolean }> {
+  async deleteProduct(id: number): Promise<{ deleted: boolean; deactivated: boolean; message?: string }> {
     const hasHistory =
       this.orderItems.some((i) => i.productId === id) ||
       this.purchaseItems.some((i) => i.productId === id) ||
@@ -202,15 +322,46 @@ export class DevErpDataSource implements ErpDataSource {
 
     if (hasHistory) {
       const product = this.products.find((p) => p.id === id);
-      if (product) product.isActive = false;
-      return { deleted: false, deactivated: true };
+      if (product) {
+        product.isActive = false;
+        product.archivedAt = Date.now();
+      }
+      this.saveLocal('distriflow_products', this.products);
+      return {
+        deleted: false,
+        deactivated: true,
+        message: 'This product has historical transactions and cannot be permanently deleted. It has been archived instead.',
+      };
     }
 
     this.products = this.products.filter((p) => p.id !== id);
-    return { deleted: true, deactivated: false };
+    this.saveLocal('distriflow_products', this.products);
+    return { deleted: true, deactivated: false, message: 'Product permanently deleted.' };
   }
 
-  // Orders
+  async restoreProduct(id: number): Promise<void> {
+    const product = this.products.find((p) => p.id === id);
+    if (product) {
+      product.isActive = true;
+      product.archivedAt = undefined;
+      this.saveLocal('distriflow_products', this.products);
+    }
+  }
+
+  async permanentDeleteProduct(id: number): Promise<void> {
+    const hasHistory =
+      this.orderItems.some((i) => i.productId === id) ||
+      this.purchaseItems.some((i) => i.productId === id);
+    if (hasHistory) {
+      throw new Error('Cannot permanently delete product with existing purchase or order history.');
+    }
+    this.products = this.products.filter((p) => p.id !== id);
+    this.saveLocal('distriflow_products', this.products);
+  }
+
+  // ==========================================
+  // ORDERS & ORDER ITEMS
+  // ==========================================
   async getOrders(): Promise<Order[]> {
     return [...this.orders].sort((a, b) => b.orderDate - a.orderDate);
   }
@@ -220,47 +371,50 @@ export class DevErpDataSource implements ErpDataSource {
   }
 
   async getOrderItems(orderId: number): Promise<OrderItem[]> {
-    return this.orderItems.filter((i) => i.orderId === orderId);
+    return this.orderItems.filter((it) => it.orderId === orderId);
   }
 
   async saveOrder(
     order: Omit<Order, 'id' | 'createdAt' | 'updatedAt'> & { id?: number },
     items: Omit<OrderItem, 'id' | 'orderId'>[]
   ): Promise<Order> {
-    const now = Date.now();
-    let orderId = order.id;
-
-    if (orderId && orderId > 0) {
-      const idx = this.orders.findIndex((o) => o.id === orderId);
+    let savedOrderId = order.id;
+    if (savedOrderId && savedOrderId > 0) {
+      const idx = this.orders.findIndex((o) => o.id === savedOrderId);
       if (idx >= 0) {
-        this.orders[idx] = {
+        const updated: Order = {
           ...this.orders[idx],
           ...order,
-          id: orderId,
-          updatedAt: now,
+          id: savedOrderId,
+          updatedAt: Date.now(),
         };
+        this.orders[idx] = updated;
+        this.orderItems = this.orderItems.filter((it) => it.orderId !== savedOrderId);
       }
-      this.orderItems = this.orderItems.filter((i) => i.orderId !== orderId);
     } else {
-      orderId = Math.max(0, ...this.orders.map((o) => o.id)) + 1;
+      savedOrderId = Math.max(0, ...this.orders.map((o) => o.id)) + 1;
       const created: Order = {
         ...order,
-        id: orderId,
-        createdAt: now,
-        updatedAt: now,
+        id: savedOrderId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
       };
-      this.orders.unshift(created);
+      this.orders.push(created);
     }
 
-    let nextItemId = Math.max(0, ...this.orderItems.map((i) => i.id)) + 1;
-    const createdItems: OrderItem[] = items.map((it) => ({
-      ...it,
-      id: nextItemId++,
-      orderId: orderId!,
-    }));
-    this.orderItems.push(...createdItems);
+    let nextItemId = Math.max(0, ...this.orderItems.map((it) => it.id)) + 1;
+    for (const it of items) {
+      this.orderItems.push({
+        ...it,
+        id: nextItemId++,
+        orderId: savedOrderId!,
+      });
+    }
 
-    return this.orders.find((o) => o.id === orderId)!;
+    this.saveLocal('distriflow_orders', this.orders);
+    this.saveLocal('distriflow_order_items', this.orderItems);
+
+    return (await this.getOrderById(savedOrderId!))!;
   }
 
   async updateOrderStatus(orderId: number, status: OrderStatus, feedback?: string): Promise<void> {
@@ -269,15 +423,52 @@ export class DevErpDataSource implements ErpDataSource {
       order.status = status;
       if (feedback !== undefined) order.ownerFeedback = feedback;
       order.updatedAt = Date.now();
+      this.saveLocal('distriflow_orders', this.orders);
     }
   }
 
   async deleteOrder(id: number): Promise<void> {
+    const hasInvoice = this.invoices.some((i) => i.orderId === id);
+    if (hasInvoice) {
+      const order = this.orders.find((o) => o.id === id);
+      if (order) {
+        order.isArchived = true;
+        order.archivedAt = Date.now();
+        order.status = 'CANCELLED';
+      }
+      this.saveLocal('distriflow_orders', this.orders);
+      return;
+    }
     this.orders = this.orders.filter((o) => o.id !== id);
-    this.orderItems = this.orderItems.filter((i) => i.orderId !== id);
+    this.orderItems = this.orderItems.filter((it) => it.orderId !== id);
+    this.saveLocal('distriflow_orders', this.orders);
+    this.saveLocal('distriflow_order_items', this.orderItems);
   }
 
-  // Invoices
+  async restoreOrder(id: number): Promise<void> {
+    const order = this.orders.find((o) => o.id === id);
+    if (order) {
+      order.isArchived = false;
+      order.archivedAt = undefined;
+      order.status = 'DRAFT';
+      this.saveLocal('distriflow_orders', this.orders);
+    }
+  }
+
+  async permanentDeleteOrder(id: number): Promise<void> {
+    const hasInvoice = this.invoices.some((i) => i.orderId === id);
+    if (hasInvoice) {
+      throw new Error('Cannot permanently delete order: an associated invoice exists in accounting.');
+    }
+    this.orders = this.orders.filter((o) => o.id !== id);
+    this.orderItems = this.orderItems.filter((it) => it.orderId !== id);
+    this.saveLocal('distriflow_orders', this.orders);
+    this.saveLocal('distriflow_order_items', this.orderItems);
+  }
+
+  // ==========================================
+  // INVOICES & INVOICE ITEMS
+  // ==========================================
   async getInvoices(): Promise<Invoice[]> {
     return [...this.invoices].sort((a, b) => b.invoiceDate - a.invoiceDate);
   }
@@ -287,7 +478,7 @@ export class DevErpDataSource implements ErpDataSource {
   }
 
   async getInvoiceItems(invoiceId: number): Promise<InvoiceItem[]> {
-    return this.invoiceItems.filter((i) => i.invoiceId === invoiceId);
+    return this.invoiceItems.filter((it) => it.invoiceId === invoiceId);
   }
 
   async createInvoice(
@@ -295,39 +486,62 @@ export class DevErpDataSource implements ErpDataSource {
     items: Omit<InvoiceItem, 'id' | 'invoiceId'>[]
   ): Promise<Invoice> {
     const newId = Math.max(0, ...this.invoices.map((i) => i.id)) + 1;
-    const createdInvoice: Invoice = {
+    const created: Invoice = {
       ...invoice,
       id: newId,
+      status: 'POSTED',
       createdAt: Date.now(),
     };
-    this.invoices.unshift(createdInvoice);
+    this.invoices.push(created);
 
-    let nextItemId = Math.max(0, ...this.invoiceItems.map((i) => i.id)) + 1;
-    const createdItems: InvoiceItem[] = items.map((it) => ({
-      ...it,
-      id: nextItemId++,
-      invoiceId: newId,
-    }));
-    this.invoiceItems.push(...createdItems);
+    let nextItemId = Math.max(0, ...this.invoiceItems.map((it) => it.id)) + 1;
+    for (const it of items) {
+      this.invoiceItems.push({
+        ...it,
+        id: nextItemId++,
+        invoiceId: newId,
+      });
+    }
 
-    return createdInvoice;
+    this.saveLocal('distriflow_invoices', this.invoices);
+    this.saveLocal('distriflow_invoice_items', this.invoiceItems);
+    return created;
   }
 
   async updateInvoicePayment(id: number, amount: number, status: InvoicePaymentStatus): Promise<void> {
     const invoice = this.invoices.find((i) => i.id === id);
     if (invoice) {
-      invoice.amountPaid += amount;
-      invoice.remainingBalance = Math.max(0, invoice.remainingBalance - amount);
-      invoice.paymentStatus = status;
+      invoice.amountPaid = Math.max(0, invoice.amountPaid + amount);
+      invoice.remainingBalance = Math.max(0, invoice.totalAmount - invoice.amountPaid);
+      invoice.paymentStatus =
+        status ||
+        (invoice.amountPaid >= invoice.totalAmount ? 'PAID' : invoice.amountPaid > 0 ? 'PARTIALLY_PAID' : 'UNPAID');
+      this.saveLocal('distriflow_invoices', this.invoices);
     }
   }
 
   async deleteInvoice(id: number): Promise<void> {
     this.invoices = this.invoices.filter((i) => i.id !== id);
     this.invoiceItems = this.invoiceItems.filter((it) => it.invoiceId !== id);
+    this.saveLocal('distriflow_invoices', this.invoices);
+    this.saveLocal('distriflow_invoice_items', this.invoiceItems);
   }
 
-  // Purchases
+  async voidInvoice(id: number, reason?: string, voidedBy?: string): Promise<void> {
+    const invoice = this.invoices.find((i) => i.id === id);
+    if (invoice) {
+      invoice.paymentStatus = 'VOIDED';
+      invoice.status = 'VOIDED';
+      invoice.voidedAt = Date.now();
+      invoice.voidedBy = voidedBy;
+      invoice.voidReason = reason;
+      this.saveLocal('distriflow_invoices', this.invoices);
+    }
+  }
+
+  // ==========================================
+  // PURCHASES
+  // ==========================================
   async getPurchases(): Promise<Purchase[]> {
     return [...this.purchases].sort((a, b) => b.purchaseDate - a.purchaseDate);
   }
@@ -337,42 +551,60 @@ export class DevErpDataSource implements ErpDataSource {
     items: Omit<PurchaseItem, 'id' | 'purchaseId'>[]
   ): Promise<Purchase> {
     const newId = Math.max(0, ...this.purchases.map((p) => p.id)) + 1;
-    const createdPurchase: Purchase = {
+    const created: Purchase = {
       ...purchase,
       id: newId,
+      status: 'POSTED',
       createdAt: Date.now(),
     };
-    this.purchases.unshift(createdPurchase);
+    this.purchases.push(created);
 
-    let nextItemId = Math.max(0, ...this.purchaseItems.map((i) => i.id)) + 1;
-    const createdItems: PurchaseItem[] = items.map((it) => ({
-      ...it,
-      id: nextItemId++,
-      purchaseId: newId,
-    }));
-    this.purchaseItems.push(...createdItems);
+    let nextItemId = Math.max(0, ...this.purchaseItems.map((it) => it.id)) + 1;
+    for (const it of items) {
+      this.purchaseItems.push({
+        ...it,
+        id: nextItemId++,
+        purchaseId: newId,
+      });
+    }
 
-    return createdPurchase;
+    this.saveLocal('distriflow_purchases', this.purchases);
+    this.saveLocal('distriflow_purchase_items', this.purchaseItems);
+    return created;
   }
 
   async updatePurchasePayment(purchaseId: number, amount: number): Promise<void> {
     const purchase = this.purchases.find((p) => p.id === purchaseId);
     if (purchase) {
-      purchase.amountPaid += amount;
-      if (purchase.amountPaid >= purchase.totalAmount) {
-        purchase.paymentStatus = 'PAID';
-      } else if (purchase.amountPaid > 0) {
-        purchase.paymentStatus = 'PARTIALLY_PAID';
-      }
+      purchase.amountPaid = Math.max(0, purchase.amountPaid + amount);
+      purchase.paymentStatus =
+        purchase.amountPaid >= purchase.totalAmount ? 'PAID' : purchase.amountPaid > 0 ? 'PARTIALLY_PAID' : 'UNPAID';
+      this.saveLocal('distriflow_purchases', this.purchases);
     }
   }
 
   async deletePurchase(id: number): Promise<void> {
     this.purchases = this.purchases.filter((p) => p.id !== id);
-    this.purchaseItems = this.purchaseItems.filter((i) => i.purchaseId !== id);
+    this.purchaseItems = this.purchaseItems.filter((it) => it.purchaseId !== id);
+    this.saveLocal('distriflow_purchases', this.purchases);
+    this.saveLocal('distriflow_purchase_items', this.purchaseItems);
   }
 
-  // Payments
+  async voidPurchase(id: number, reason?: string, voidedBy?: string): Promise<void> {
+    const purchase = this.purchases.find((p) => p.id === id);
+    if (purchase) {
+      purchase.paymentStatus = 'VOIDED';
+      purchase.status = 'VOIDED';
+      purchase.voidedAt = Date.now();
+      purchase.voidedBy = voidedBy;
+      purchase.voidReason = reason;
+      this.saveLocal('distriflow_purchases', this.purchases);
+    }
+  }
+
+  // ==========================================
+  // PAYMENTS & COLLECTIONS
+  // ==========================================
   async getPayments(): Promise<Payment[]> {
     return [...this.payments].sort((a, b) => b.paymentDate - a.paymentDate);
   }
@@ -382,17 +614,33 @@ export class DevErpDataSource implements ErpDataSource {
     const created: Payment = {
       ...payment,
       id: newId,
+      status: payment.status || 'ACTIVE',
       createdAt: Date.now(),
     };
-    this.payments.unshift(created);
+    this.payments.push(created);
+    this.saveLocal('distriflow_payments', this.payments);
     return created;
   }
 
   async deletePayment(id: number): Promise<void> {
     this.payments = this.payments.filter((p) => p.id !== id);
+    this.saveLocal('distriflow_payments', this.payments);
   }
 
-  // Movements
+  async reversePayment(id: number, reason?: string, reversedBy?: string): Promise<void> {
+    const payment = this.payments.find((p) => p.id === id);
+    if (payment) {
+      payment.status = 'REVERSED';
+      payment.reversedAt = Date.now();
+      payment.reversedBy = reversedBy;
+      payment.reversalReason = reason || 'Reversed by Administrator';
+      this.saveLocal('distriflow_payments', this.payments);
+    }
+  }
+
+  // ==========================================
+  // INVENTORY MOVEMENTS (AUDIT TRAIL)
+  // ==========================================
   async getMovements(): Promise<InventoryMovement[]> {
     return [...this.movements].sort((a, b) => b.timestamp - a.timestamp);
   }
@@ -404,15 +652,19 @@ export class DevErpDataSource implements ErpDataSource {
       id: newId,
       timestamp: Date.now(),
     };
-    this.movements.unshift(created);
+    this.movements.push(created);
+    this.saveLocal('distriflow_movements', this.movements);
     return created;
   }
 
   async deleteMovement(id: number): Promise<void> {
     this.movements = this.movements.filter((m) => m.id !== id);
+    this.saveLocal('distriflow_movements', this.movements);
   }
 
-  // Deliveries
+  // ==========================================
+  // DELIVERIES
+  // ==========================================
   async getDeliveries(): Promise<Delivery[]> {
     return [...this.deliveries].sort((a, b) => b.scheduledDate - a.scheduledDate);
   }
@@ -424,7 +676,8 @@ export class DevErpDataSource implements ErpDataSource {
       id: newId,
       createdAt: Date.now(),
     };
-    this.deliveries.unshift(created);
+    this.deliveries.push(created);
+    this.saveLocal('distriflow_deliveries', this.deliveries);
     return created;
   }
 
@@ -439,14 +692,18 @@ export class DevErpDataSource implements ErpDataSource {
       delivery.status = status;
       if (deliveredDate) delivery.deliveredDate = deliveredDate;
       if (notes) delivery.notes = notes;
+      this.saveLocal('distriflow_deliveries', this.deliveries);
     }
   }
 
   async deleteDelivery(id: number): Promise<void> {
     this.deliveries = this.deliveries.filter((d) => d.id !== id);
+    this.saveLocal('distriflow_deliveries', this.deliveries);
   }
 
-  // Users
+  // ==========================================
+  // USERS / SALES TEAM
+  // ==========================================
   async getUsers(): Promise<User[]> {
     return [...this.users];
   }
@@ -459,12 +716,14 @@ export class DevErpDataSource implements ErpDataSource {
     if (user.id && user.id > 0) {
       const idx = this.users.findIndex((u) => u.id === user.id);
       if (idx >= 0) {
-        this.users[idx] = {
+        const updated: User = {
           ...this.users[idx],
           ...user,
           id: user.id,
         };
-        return this.users[idx];
+        this.users[idx] = updated;
+        this.saveLocal('distriflow_users', this.users);
+        return updated;
       }
     }
     const newId = Math.max(0, ...this.users.map((u) => u.id)) + 1;
@@ -476,10 +735,66 @@ export class DevErpDataSource implements ErpDataSource {
       createdAt: Date.now(),
     };
     this.users.push(created);
+    this.saveLocal('distriflow_users', this.users);
     return created;
   }
 
   async deleteUser(id: number): Promise<void> {
+    const user = this.users.find((u) => u.id === id);
+    if (user) {
+      user.isActive = false;
+      user.archivedAt = Date.now();
+      this.saveLocal('distriflow_users', this.users);
+    }
+  }
+
+  async restoreUser(id: number): Promise<void> {
+    const user = this.users.find((u) => u.id === id);
+    if (user) {
+      user.isActive = true;
+      user.archivedAt = undefined;
+      this.saveLocal('distriflow_users', this.users);
+    }
+  }
+
+  async permanentDeleteUser(id: number): Promise<void> {
     this.users = this.users.filter((u) => u.id !== id);
+    this.saveLocal('distriflow_users', this.users);
+  }
+
+  // ==========================================
+  // COMPANY PROFILE
+  // ==========================================
+  async getCompanyProfile(): Promise<CompanyProfile> {
+    return { ...this.companyProfile };
+  }
+
+  async saveCompanyProfile(profile: Partial<CompanyProfile>): Promise<CompanyProfile> {
+    this.companyProfile = {
+      ...this.companyProfile,
+      ...profile,
+      updatedAt: Date.now(),
+    };
+    this.saveLocal('distriflow_company_profile', this.companyProfile);
+    return { ...this.companyProfile };
+  }
+
+  // ==========================================
+  // AUDIT LOGS
+  // ==========================================
+  async getAuditLogs(limit: number = 100): Promise<AuditLog[]> {
+    return [...this.auditLogs].sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
+  }
+
+  async createAuditLog(log: Omit<AuditLog, 'id' | 'timestamp'>): Promise<AuditLog> {
+    const newId = Math.max(0, ...this.auditLogs.map((l) => l.id)) + 1;
+    const created: AuditLog = {
+      ...log,
+      id: newId,
+      timestamp: Date.now(),
+    };
+    this.auditLogs.unshift(created);
+    this.saveLocal('distriflow_audit_logs', this.auditLogs);
+    return created;
   }
 }
