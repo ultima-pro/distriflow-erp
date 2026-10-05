@@ -1006,10 +1006,10 @@ export class SupabaseErpDataSource implements ErpDataSource {
     const client = this.ensureConfigured();
     const { data, error } = await client
       .from('payments')
-      .select('*, profiles(full_name)')
+      .select('*, profiles!payments_recorded_by_user_id_fkey(full_name)')
       .order('payment_date', { ascending: false });
     if (error) throw error;
-    return (data || []).map((row) => ({
+    return (data || []).map((row: any) => ({
       id: row.id,
       paymentNumber: row.payment_number,
       type: row.type,
@@ -1023,7 +1023,7 @@ export class SupabaseErpDataSource implements ErpDataSource {
       referenceNumber: row.reference_number,
       notes: row.notes,
       recordedByUserId: row.recorded_by_user_id,
-      recordedByName: row.profiles?.full_name || '',
+      recordedByName: row.profiles?.full_name || row['profiles!payments_recorded_by_user_id_fkey']?.full_name || '',
       status: row.status || 'ACTIVE',
       reversedAt: row.reversed_at ? new Date(row.reversed_at).getTime() : undefined,
       reversedBy: row.reversed_by,
