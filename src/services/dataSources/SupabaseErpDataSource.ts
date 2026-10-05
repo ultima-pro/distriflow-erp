@@ -551,16 +551,16 @@ export class SupabaseErpDataSource implements ErpDataSource {
     const client = this.ensureConfigured();
     const { data, error } = await client
       .from('orders')
-      .select('*, retailers(name), profiles(full_name)')
+      .select('*, retailers(name), profiles!orders_salesperson_id_fkey(full_name)')
       .order('order_date', { ascending: false });
     if (error) throw error;
-    return (data || []).map((row) => ({
+    return (data || []).map((row: any) => ({
       id: row.id,
       orderNumber: row.order_number,
       retailerId: row.retailer_id,
       retailerName: row.retailers?.name || '',
       salespersonId: row.salesperson_id,
-      salespersonName: row.profiles?.full_name || '',
+      salespersonName: row.profiles?.full_name || row['profiles!orders_salesperson_id_fkey']?.full_name || '',
       orderDate: new Date(row.order_date).getTime(),
       status: row.status,
       subtotal: parseFloat(row.subtotal || '0'),
@@ -579,28 +579,29 @@ export class SupabaseErpDataSource implements ErpDataSource {
     const client = this.ensureConfigured();
     const { data, error } = await client
       .from('orders')
-      .select('*, retailers(name), profiles(full_name)')
+      .select('*, retailers(name), profiles!orders_salesperson_id_fkey(full_name)')
       .eq('id', id)
       .maybeSingle();
     if (error || !data) return null;
+    const row = data as any;
     return {
-      id: data.id,
-      orderNumber: data.order_number,
-      retailerId: data.retailer_id,
-      retailerName: data.retailers?.name || '',
-      salespersonId: data.salesperson_id,
-      salespersonName: data.profiles?.full_name || '',
-      orderDate: new Date(data.order_date).getTime(),
-      status: data.status,
-      subtotal: parseFloat(data.subtotal || '0'),
-      discount: parseFloat(data.discount || '0'),
-      totalAmount: parseFloat(data.total_amount || '0'),
-      notes: data.notes,
-      ownerFeedback: data.owner_feedback,
-      isArchived: data.is_archived || false,
-      archivedAt: data.archived_at ? new Date(data.archived_at).getTime() : undefined,
-      createdAt: new Date(data.created_at).getTime(),
-      updatedAt: new Date(data.updated_at).getTime(),
+      id: row.id,
+      orderNumber: row.order_number,
+      retailerId: row.retailer_id,
+      retailerName: row.retailers?.name || '',
+      salespersonId: row.salesperson_id,
+      salespersonName: row.profiles?.full_name || row['profiles!orders_salesperson_id_fkey']?.full_name || '',
+      orderDate: new Date(row.order_date).getTime(),
+      status: row.status,
+      subtotal: parseFloat(row.subtotal || '0'),
+      discount: parseFloat(row.discount || '0'),
+      totalAmount: parseFloat(row.total_amount || '0'),
+      notes: row.notes,
+      ownerFeedback: row.owner_feedback,
+      isArchived: row.is_archived || false,
+      archivedAt: row.archived_at ? new Date(row.archived_at).getTime() : undefined,
+      createdAt: new Date(row.created_at).getTime(),
+      updatedAt: new Date(row.updated_at).getTime(),
     };
   }
 
