@@ -18,6 +18,7 @@ import {
   CheckCircle,
   TrendingDown,
   TrendingUp,
+  RotateCcw,
 } from 'lucide-react';
 
 export const ProductsScreen: React.FC = () => {
@@ -28,6 +29,7 @@ export const ProductsScreen: React.FC = () => {
     movements,
     saveProduct,
     deleteProduct,
+    restoreProduct,
     adjustStock,
     setActiveTab,
   } = useErp();
@@ -35,6 +37,7 @@ export const ProductsScreen: React.FC = () => {
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('ALL');
   const [onlyLowStock, setOnlyLowStock] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ACTIVE');
 
   // Edit / Add modal
   const [isEditing, setIsEditing] = useState(false);
@@ -54,6 +57,9 @@ export const ProductsScreen: React.FC = () => {
 
   const categories = Array.from(new Set(products.map((p) => p.category)));
 
+  const activeCount = products.filter((p) => p.isActive).length;
+  const inactiveCount = products.filter((p) => !p.isActive).length;
+
   const filtered = products.filter((p) => {
     const matchesSearch =
       p.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -61,7 +67,11 @@ export const ProductsScreen: React.FC = () => {
       p.category.toLowerCase().includes(search.toLowerCase());
     const matchesCategory = selectedCategory === 'ALL' || p.category === selectedCategory;
     const matchesLowStock = !onlyLowStock || p.currentStock <= p.minStockLevel;
-    return matchesSearch && matchesCategory && matchesLowStock;
+    const matchesStatus =
+      statusFilter === 'ALL' ||
+      (statusFilter === 'ACTIVE' && p.isActive) ||
+      (statusFilter === 'INACTIVE' && !p.isActive);
+    return matchesSearch && matchesCategory && matchesLowStock && matchesStatus;
   });
 
   const handleStartAdd = () => {
@@ -158,6 +168,49 @@ export const ProductsScreen: React.FC = () => {
             </button>
           </div>
         )}
+      </div>
+
+      {/* Status Segment Tabs: Active Catalog, All, Inactive */}
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+        <button
+          onClick={() => setStatusFilter('ACTIVE')}
+          className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 ${
+            statusFilter === 'ACTIVE'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <span>Active Catalog</span>
+          <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${statusFilter === 'ACTIVE' ? 'bg-blue-700 text-white' : 'bg-slate-200 text-slate-700'}`}>
+            {activeCount}
+          </span>
+        </button>
+        <button
+          onClick={() => setStatusFilter('ALL')}
+          className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 ${
+            statusFilter === 'ALL'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <span>All Products</span>
+          <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${statusFilter === 'ALL' ? 'bg-blue-700 text-white' : 'bg-slate-200 text-slate-700'}`}>
+            {products.length}
+          </span>
+        </button>
+        <button
+          onClick={() => setStatusFilter('INACTIVE')}
+          className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 ${
+            statusFilter === 'INACTIVE'
+              ? 'bg-amber-600 text-white shadow-xs'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <span>Inactive / Preserved</span>
+          <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${statusFilter === 'INACTIVE' ? 'bg-amber-700 text-white' : 'bg-slate-200 text-slate-700'}`}>
+            {inactiveCount}
+          </span>
+        </button>
       </div>
 
       {/* Filter and Search Bar */}

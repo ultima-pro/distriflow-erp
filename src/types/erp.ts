@@ -350,15 +350,27 @@ export interface AuditLog {
   timestamp: number;
 }
 
-// --- Recycle Bin Model ---
+// --- Recycle Bin Model for Business Documents ---
+export type RecycleBinCategory = 'SALES' | 'PURCHASES' | 'FINANCIAL';
+export type RecycleBinModule = 'ORDERS' | 'INVOICES' | 'PURCHASES' | 'PAYMENTS';
+
 export interface RecycleBinItem {
-  id: number | string;
+  id: string;
   numericId: number;
-  module: 'PRODUCTS' | 'RETAILERS' | 'SUPPLIERS' | 'SALES_TEAM' | 'ORDERS';
+  category: RecycleBinCategory;
+  module: RecycleBinModule;
+  recordType: string;
   name: string;
   identifier: string;
+  amount: number;
+  entityName: string;
+  date: number;
   archivedAt: number;
   archivedBy?: string;
+  reason?: string;
+  status: string;
+  canRestore: boolean;
+  canPurge: boolean;
   hasHistoricalReferences: boolean;
   dependencyNote?: string;
 }

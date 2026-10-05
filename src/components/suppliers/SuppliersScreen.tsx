@@ -371,7 +371,7 @@ export const SuppliersScreen: React.FC = () => {
                   onChange={(e) => setPurchaseSupplierId(parseInt(e.target.value))}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm outline-none bg-white font-medium"
                 >
-                  {suppliers.map((s) => (
+                  {suppliers.filter((s) => s.isActive).map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
                     </option>
@@ -399,7 +399,7 @@ export const SuppliersScreen: React.FC = () => {
                 Select Received Products
               </label>
               <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto p-2 border border-slate-200 rounded-xl bg-slate-50">
-                {products.map((p) => (
+                {products.filter((p) => p.isActive).map((p) => (
                   <button
                     key={p.id}
                     type="button"

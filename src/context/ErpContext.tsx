@@ -469,9 +469,9 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const res = await ErpService.deleteRetailer(retailerId, getActor());
       await refreshData();
       if (res?.deactivated) {
-        showToast(res.message || 'Retailer has historical transactions and was archived.', 'info');
+        showToast(res.message || 'This retailer has historical transactions and has been made inactive. Historical records remain preserved.', 'info');
       } else {
-        showToast('Retailer deleted successfully', 'success');
+        showToast('Retailer permanently deleted', 'success');
       }
       return res;
     } catch (err: any) {
@@ -523,7 +523,7 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await refreshData();
       if (res?.deactivated) {
         showToast(
-          res.message || 'This product has historical transactions and cannot be permanently deleted. It has been archived instead.',
+          res.message || 'This product has historical transactions and has been made inactive. Historical documents remain preserved.',
           'info'
         );
       } else {
@@ -600,9 +600,9 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const res = await ErpService.deleteSupplier(supplierId, getActor());
       await refreshData();
       if (res?.deactivated) {
-        showToast(res.message || 'Supplier has purchase records and was archived.', 'info');
+        showToast(res.message || 'This supplier has historical transactions and has been made inactive. Historical records remain preserved.', 'info');
       } else {
-        showToast('Supplier deleted successfully', 'success');
+        showToast('Supplier permanently deleted', 'success');
       }
       return res;
     } catch (err: any) {
@@ -762,7 +762,7 @@ export const ErpProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       await ErpService.deleteUser(userId, getActor());
       await refreshData();
-      showToast('Sales representative deactivated / archived', 'success');
+      showToast('Sales representative deactivated and preserved for historical records', 'info');
     } catch (err: any) {
       showToast(err.message || 'Failed to deactivate representative', 'error');
       throw err;

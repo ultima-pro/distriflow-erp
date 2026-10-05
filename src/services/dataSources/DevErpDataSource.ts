@@ -144,7 +144,8 @@ export class DevErpDataSource implements ErpDataSource {
   async deleteRetailer(id: number): Promise<{ deleted: boolean; deactivated: boolean; message?: string }> {
     const hasHistory =
       this.orders.some((o) => o.retailerId === id) ||
-      this.invoices.some((i) => i.retailerId === id);
+      this.invoices.some((i) => i.retailerId === id) ||
+      this.deliveries.some((d) => d.retailerId === id);
 
     if (hasHistory) {
       const retailer = this.retailers.find((r) => r.id === id);
@@ -156,7 +157,7 @@ export class DevErpDataSource implements ErpDataSource {
       return {
         deleted: false,
         deactivated: true,
-        message: 'Retailer has existing orders or invoices and was archived instead of deleted.',
+        message: 'This retailer has historical transactions and has been made inactive. Historical records remain preserved.',
       };
     }
 
@@ -177,9 +178,10 @@ export class DevErpDataSource implements ErpDataSource {
   async permanentDeleteRetailer(id: number): Promise<void> {
     const hasHistory =
       this.orders.some((o) => o.retailerId === id) ||
-      this.invoices.some((i) => i.retailerId === id);
+      this.invoices.some((i) => i.retailerId === id) ||
+      this.deliveries.some((d) => d.retailerId === id);
     if (hasHistory) {
-      throw new Error('Cannot permanently delete retailer: historical orders or invoices depend on this account.');
+      throw new Error('This retailer has historical transactions and has been made inactive. Historical records remain preserved.');
     }
     this.retailers = this.retailers.filter((r) => r.id !== id);
     this.saveLocal('distriflow_retailers', this.retailers);
@@ -232,8 +234,10 @@ export class DevErpDataSource implements ErpDataSource {
   }
 
   async deleteSupplier(id: number): Promise<{ deleted: boolean; deactivated: boolean; message?: string }> {
-    const hasPurchases = this.purchases.some((p) => p.supplierId === id);
-    if (hasPurchases) {
+    const hasHistory =
+      this.purchases.some((p) => p.supplierId === id) ||
+      this.products.some((pr) => pr.supplierId === id);
+    if (hasHistory) {
       const supplier = this.suppliers.find((s) => s.id === id);
       if (supplier) {
         supplier.isActive = false;
@@ -243,7 +247,7 @@ export class DevErpDataSource implements ErpDataSource {
       return {
         deleted: false,
         deactivated: true,
-        message: 'Supplier has purchase bills and was archived instead of deleted.',
+        message: 'This supplier has historical transactions and has been made inactive. Historical records remain preserved.',
       };
     }
     this.suppliers = this.suppliers.filter((s) => s.id !== id);
@@ -261,9 +265,11 @@ export class DevErpDataSource implements ErpDataSource {
   }
 
   async permanentDeleteSupplier(id: number): Promise<void> {
-    const hasPurchases = this.purchases.some((p) => p.supplierId === id);
-    if (hasPurchases) {
-      throw new Error('Cannot permanently delete supplier: recorded purchases depend on this supplier.');
+    const hasHistory =
+      this.purchases.some((p) => p.supplierId === id) ||
+      this.products.some((pr) => pr.supplierId === id);
+    if (hasHistory) {
+      throw new Error('This supplier has historical transactions and has been made inactive. Historical records remain preserved.');
     }
     this.suppliers = this.suppliers.filter((s) => s.id !== id);
     this.saveLocal('distriflow_suppliers', this.suppliers);
@@ -317,6 +323,7 @@ export class DevErpDataSource implements ErpDataSource {
   async deleteProduct(id: number): Promise<{ deleted: boolean; deactivated: boolean; message?: string }> {
     const hasHistory =
       this.orderItems.some((i) => i.productId === id) ||
+      this.invoiceItems.some((i) => i.productId === id) ||
       this.purchaseItems.some((i) => i.productId === id) ||
       this.movements.some((m) => m.productId === id);
 
@@ -330,7 +337,7 @@ export class DevErpDataSource implements ErpDataSource {
       return {
         deleted: false,
         deactivated: true,
-        message: 'This product has historical transactions and cannot be permanently deleted. It has been archived instead.',
+        message: 'This product has historical transactions and has been made inactive. Historical documents remain preserved.',
       };
     }
 
@@ -351,9 +358,11 @@ export class DevErpDataSource implements ErpDataSource {
   async permanentDeleteProduct(id: number): Promise<void> {
     const hasHistory =
       this.orderItems.some((i) => i.productId === id) ||
-      this.purchaseItems.some((i) => i.productId === id);
+      this.invoiceItems.some((i) => i.productId === id) ||
+      this.purchaseItems.some((i) => i.productId === id) ||
+      this.movements.some((m) => m.productId === id);
     if (hasHistory) {
-      throw new Error('Cannot permanently delete product with existing purchase or order history.');
+      throw new Error('This product has historical transactions and has been made inactive. Historical documents remain preserved.');
     }
     this.products = this.products.filter((p) => p.id !== id);
     this.saveLocal('distriflow_products', this.products);
@@ -429,7 +438,8 @@ export class DevErpDataSource implements ErpDataSource {
 
   async deleteOrder(id: number): Promise<void> {
     const hasInvoice = this.invoices.some((i) => i.orderId === id);
-    if (hasInvoice) {
+    const hasDelivery = this.deliveries.some((d) => d.orderId === id);
+    if (hasInvoice || hasDelivery) {
       const order = this.orders.find((o) => o.id === id);
       if (order) {
         order.isArchived = true;
@@ -446,6 +456,10 @@ export class DevErpDataSource implements ErpDataSource {
   }
 
   async restoreOrder(id: number): Promise<void> {
+    const hasInvoice = this.invoices.some((i) => i.orderId === id);
+    if (hasInvoice) {
+      throw new Error('Cannot restore order: an associated invoice exists in the accounting ledger.');
+    }
     const order = this.orders.find((o) => o.id === id);
     if (order) {
       order.isArchived = false;
@@ -457,8 +471,9 @@ export class DevErpDataSource implements ErpDataSource {
 
   async permanentDeleteOrder(id: number): Promise<void> {
     const hasInvoice = this.invoices.some((i) => i.orderId === id);
-    if (hasInvoice) {
-      throw new Error('Cannot permanently delete order: an associated invoice exists in accounting.');
+    const hasDelivery = this.deliveries.some((d) => d.orderId === id);
+    if (hasInvoice || hasDelivery) {
+      throw new Error('Cannot permanently delete order: historical invoice or delivery records depend on this order.');
     }
     this.orders = this.orders.filter((o) => o.id !== id);
     this.orderItems = this.orderItems.filter((it) => it.orderId !== id);
@@ -521,10 +536,7 @@ export class DevErpDataSource implements ErpDataSource {
   }
 
   async deleteInvoice(id: number): Promise<void> {
-    this.invoices = this.invoices.filter((i) => i.id !== id);
-    this.invoiceItems = this.invoiceItems.filter((it) => it.invoiceId !== id);
-    this.saveLocal('distriflow_invoices', this.invoices);
-    this.saveLocal('distriflow_invoice_items', this.invoiceItems);
+    return this.voidInvoice(id, 'Deleted/Voided via Invoices screen');
   }
 
   async voidInvoice(id: number, reason?: string, voidedBy?: string): Promise<void> {
@@ -584,10 +596,7 @@ export class DevErpDataSource implements ErpDataSource {
   }
 
   async deletePurchase(id: number): Promise<void> {
-    this.purchases = this.purchases.filter((p) => p.id !== id);
-    this.purchaseItems = this.purchaseItems.filter((it) => it.purchaseId !== id);
-    this.saveLocal('distriflow_purchases', this.purchases);
-    this.saveLocal('distriflow_purchase_items', this.purchaseItems);
+    return this.voidPurchase(id, 'Deleted/Voided via Purchases screen');
   }
 
   async voidPurchase(id: number, reason?: string, voidedBy?: string): Promise<void> {
@@ -623,8 +632,7 @@ export class DevErpDataSource implements ErpDataSource {
   }
 
   async deletePayment(id: number): Promise<void> {
-    this.payments = this.payments.filter((p) => p.id !== id);
-    this.saveLocal('distriflow_payments', this.payments);
+    return this.reversePayment(id, 'Reversed via Payments screen');
   }
 
   async reversePayment(id: number, reason?: string, reversedBy?: string): Promise<void> {
@@ -657,9 +665,8 @@ export class DevErpDataSource implements ErpDataSource {
     return created;
   }
 
-  async deleteMovement(id: number): Promise<void> {
-    this.movements = this.movements.filter((m) => m.id !== id);
-    this.saveLocal('distriflow_movements', this.movements);
+  async deleteMovement(_id: number): Promise<void> {
+    throw new Error('Direct deletion of inventory movements is forbidden to maintain accounting integrity. Please record a correcting Stock Adjustment instead.');
   }
 
   // ==========================================
@@ -742,8 +749,15 @@ export class DevErpDataSource implements ErpDataSource {
   async deleteUser(id: number): Promise<void> {
     const user = this.users.find((u) => u.id === id);
     if (user) {
-      user.isActive = false;
-      user.archivedAt = Date.now();
+      const hasHistory =
+        this.orders.some((o) => o.salespersonId === user.id || o.salespersonId === user.cloudId) ||
+        this.retailers.some((r) => r.assignedSalespersonId === user.id || r.assignedSalespersonId === user.cloudId);
+      if (hasHistory) {
+        user.isActive = false;
+        user.archivedAt = Date.now();
+      } else {
+        this.users = this.users.filter((u) => u.id !== id);
+      }
       this.saveLocal('distriflow_users', this.users);
     }
   }
@@ -758,8 +772,17 @@ export class DevErpDataSource implements ErpDataSource {
   }
 
   async permanentDeleteUser(id: number): Promise<void> {
-    this.users = this.users.filter((u) => u.id !== id);
-    this.saveLocal('distriflow_users', this.users);
+    const user = this.users.find((u) => u.id === id);
+    if (user) {
+      const hasHistory =
+        this.orders.some((o) => o.salespersonId === user.id || o.salespersonId === user.cloudId) ||
+        this.retailers.some((r) => r.assignedSalespersonId === user.id || r.assignedSalespersonId === user.cloudId);
+      if (hasHistory) {
+        throw new Error('This sales team member has historical transactions and has been made inactive. Historical records remain preserved.');
+      }
+      this.users = this.users.filter((u) => u.id !== id);
+      this.saveLocal('distriflow_users', this.users);
+    }
   }
 
   // ==========================================

@@ -165,7 +165,7 @@ export class SupabaseErpDataSource implements ErpDataSource {
       return {
         deleted: false,
         deactivated: true,
-        message: 'Retailer has existing orders or invoices and was archived instead of permanently deleted.',
+        message: 'This retailer has historical transactions and has been made inactive. Historical records remain preserved.',
       };
     }
 
@@ -179,7 +179,7 @@ export class SupabaseErpDataSource implements ErpDataSource {
       return {
         deleted: false,
         deactivated: true,
-        message: 'Retailer has dependencies and was archived instead of deleted.',
+        message: 'This retailer has historical transactions and has been made inactive. Historical records remain preserved.',
       };
     }
     return { deleted: true, deactivated: false, message: 'Retailer permanently deleted.' };
@@ -206,7 +206,7 @@ export class SupabaseErpDataSource implements ErpDataSource {
       .eq('retailer_id', id);
 
     if ((ordersCount || 0) > 0 || (invoicesCount || 0) > 0) {
-      throw new Error('Cannot permanently delete retailer: historical orders or invoices depend on this account.');
+      throw new Error('This retailer has historical transactions and has been made inactive. Historical records remain preserved.');
     }
 
     const { error } = await client.from('retailers').delete().eq('id', id);
@@ -314,7 +314,12 @@ export class SupabaseErpDataSource implements ErpDataSource {
       .select('*', { count: 'exact', head: true })
       .eq('supplier_id', id);
 
-    const hasHistory = (purchasesCount || 0) > 0;
+    const { count: productsCount } = await client
+      .from('products')
+      .select('*', { count: 'exact', head: true })
+      .eq('supplier_id', id);
+
+    const hasHistory = (purchasesCount || 0) > 0 || (productsCount || 0) > 0;
     if (hasHistory) {
       const { error: updateError } = await client
         .from('suppliers')
@@ -324,7 +329,7 @@ export class SupabaseErpDataSource implements ErpDataSource {
       return {
         deleted: false,
         deactivated: true,
-        message: 'Supplier has recorded purchase bills and was archived instead of permanently deleted.',
+        message: 'This supplier has historical transactions and has been made inactive. Historical records remain preserved.',
       };
     }
 
@@ -338,7 +343,7 @@ export class SupabaseErpDataSource implements ErpDataSource {
       return {
         deleted: false,
         deactivated: true,
-        message: 'Supplier has references and was archived.',
+        message: 'This supplier has historical transactions and has been made inactive. Historical records remain preserved.',
       };
     }
     return { deleted: true, deactivated: false, message: 'Supplier permanently deleted.' };
@@ -360,8 +365,13 @@ export class SupabaseErpDataSource implements ErpDataSource {
       .select('*', { count: 'exact', head: true })
       .eq('supplier_id', id);
 
-    if ((purchasesCount || 0) > 0) {
-      throw new Error('Cannot permanently delete supplier: recorded purchases depend on this supplier.');
+    const { count: productsCount } = await client
+      .from('products')
+      .select('*', { count: 'exact', head: true })
+      .eq('supplier_id', id);
+
+    if ((purchasesCount || 0) > 0 || (productsCount || 0) > 0) {
+      throw new Error('This supplier has historical transactions and has been made inactive. Historical records remain preserved.');
     }
 
     const { error } = await client.from('suppliers').delete().eq('id', id);
@@ -472,6 +482,11 @@ export class SupabaseErpDataSource implements ErpDataSource {
       .select('*', { count: 'exact', head: true })
       .eq('product_id', id);
 
+    const { count: invoiceItemsCount } = await client
+      .from('invoice_items')
+      .select('*', { count: 'exact', head: true })
+      .eq('product_id', id);
+
     const { count: purchaseItemsCount } = await client
       .from('purchase_items')
       .select('*', { count: 'exact', head: true })
@@ -484,6 +499,7 @@ export class SupabaseErpDataSource implements ErpDataSource {
 
     const hasHistory =
       (orderItemsCount || 0) > 0 ||
+      (invoiceItemsCount || 0) > 0 ||
       (purchaseItemsCount || 0) > 0 ||
       (movementsCount || 0) > 0;
 
@@ -496,7 +512,7 @@ export class SupabaseErpDataSource implements ErpDataSource {
       return {
         deleted: false,
         deactivated: true,
-        message: 'This product has historical transactions and cannot be permanently deleted. It has been archived instead.',
+        message: 'This product has historical transactions and has been made inactive. Historical documents remain preserved.',
       };
     }
 
@@ -510,7 +526,7 @@ export class SupabaseErpDataSource implements ErpDataSource {
       return {
         deleted: false,
         deactivated: true,
-        message: 'This product has historical transactions and cannot be permanently deleted. It has been archived instead.',
+        message: 'This product has historical transactions and has been made inactive. Historical documents remain preserved.',
       };
     }
     return { deleted: true, deactivated: false, message: 'Product permanently deleted.' };
@@ -531,13 +547,26 @@ export class SupabaseErpDataSource implements ErpDataSource {
       .from('order_items')
       .select('*', { count: 'exact', head: true })
       .eq('product_id', id);
+    const { count: invoiceItemsCount } = await client
+      .from('invoice_items')
+      .select('*', { count: 'exact', head: true })
+      .eq('product_id', id);
     const { count: purchaseItemsCount } = await client
       .from('purchase_items')
       .select('*', { count: 'exact', head: true })
       .eq('product_id', id);
+    const { count: movementsCount } = await client
+      .from('inventory_movements')
+      .select('*', { count: 'exact', head: true })
+      .eq('product_id', id);
 
-    if ((orderItemsCount || 0) > 0 || (purchaseItemsCount || 0) > 0) {
-      throw new Error('Cannot permanently delete product: historical orders or purchase items depend on this record.');
+    if (
+      (orderItemsCount || 0) > 0 ||
+      (invoiceItemsCount || 0) > 0 ||
+      (purchaseItemsCount || 0) > 0 ||
+      (movementsCount || 0) > 0
+    ) {
+      throw new Error('This product has historical transactions and has been made inactive. Historical documents remain preserved.');
     }
 
     const { error } = await client.from('products').delete().eq('id', id);
@@ -688,13 +717,18 @@ export class SupabaseErpDataSource implements ErpDataSource {
 
   async deleteOrder(id: number): Promise<void> {
     const client = this.ensureConfigured();
-    // Check if invoiced
+    // Check if invoiced or delivered
     const { count: invoiceCount } = await client
       .from('invoices')
       .select('*', { count: 'exact', head: true })
       .eq('order_id', id);
 
-    if ((invoiceCount || 0) > 0) {
+    const { count: deliveryCount } = await client
+      .from('deliveries')
+      .select('*', { count: 'exact', head: true })
+      .eq('order_id', id);
+
+    if ((invoiceCount || 0) > 0 || (deliveryCount || 0) > 0) {
       // Soft-archive order instead of deleting
       const { error } = await client
         .from('orders')
@@ -713,6 +747,13 @@ export class SupabaseErpDataSource implements ErpDataSource {
 
   async restoreOrder(id: number): Promise<void> {
     const client = this.ensureConfigured();
+    const { count: invoiceCount } = await client
+      .from('invoices')
+      .select('*', { count: 'exact', head: true })
+      .eq('order_id', id);
+    if ((invoiceCount || 0) > 0) {
+      throw new Error('Cannot restore order: an associated invoice exists in the accounting ledger.');
+    }
     const { error } = await client
       .from('orders')
       .update({ is_archived: false, archived_at: null, status: 'DRAFT' })
@@ -727,8 +768,13 @@ export class SupabaseErpDataSource implements ErpDataSource {
       .select('*', { count: 'exact', head: true })
       .eq('order_id', id);
 
-    if ((invoiceCount || 0) > 0) {
-      throw new Error('Cannot permanently delete order: an associated invoice exists in the accounting ledger.');
+    const { count: deliveryCount } = await client
+      .from('deliveries')
+      .select('*', { count: 'exact', head: true })
+      .eq('order_id', id);
+
+    if ((invoiceCount || 0) > 0 || (deliveryCount || 0) > 0) {
+      throw new Error('Cannot permanently delete order: historical invoice or delivery records depend on this order.');
     }
 
     await client.from('order_items').delete().eq('order_id', id);
@@ -871,11 +917,8 @@ export class SupabaseErpDataSource implements ErpDataSource {
   }
 
   async deleteInvoice(id: number): Promise<void> {
-    const client = this.ensureConfigured();
-    const { error: itemsErr } = await client.from('invoice_items').delete().eq('invoice_id', id);
-    if (itemsErr) throw itemsErr;
-    const { error } = await client.from('invoices').delete().eq('id', id);
-    if (error) throw error;
+    // Invoices are accounting records; void instead of physical deletion
+    return this.voidInvoice(id, 'Deleted/Voided via Invoices screen');
   }
 
   async voidInvoice(id: number, reason?: string, voidedBy?: string): Promise<void> {
@@ -977,11 +1020,8 @@ export class SupabaseErpDataSource implements ErpDataSource {
   }
 
   async deletePurchase(id: number): Promise<void> {
-    const client = this.ensureConfigured();
-    const { error: itemsErr } = await client.from('purchase_items').delete().eq('purchase_id', id);
-    if (itemsErr) throw itemsErr;
-    const { error } = await client.from('purchases').delete().eq('id', id);
-    if (error) throw error;
+    // Purchase bills are accounting records; void instead of physical deletion
+    return this.voidPurchase(id, 'Deleted/Voided via Purchases screen');
   }
 
   async voidPurchase(id: number, reason?: string, voidedBy?: string): Promise<void> {
@@ -1068,9 +1108,8 @@ export class SupabaseErpDataSource implements ErpDataSource {
   }
 
   async deletePayment(id: number): Promise<void> {
-    const client = this.ensureConfigured();
-    const { error } = await client.from('payments').delete().eq('id', id);
-    if (error) throw error;
+    // Payments are financial records; reverse instead of physical deletion
+    return this.reversePayment(id, 'Reversed via Payments screen');
   }
 
   async reversePayment(id: number, reason?: string, reversedBy?: string): Promise<void> {
@@ -1135,10 +1174,8 @@ export class SupabaseErpDataSource implements ErpDataSource {
     };
   }
 
-  async deleteMovement(id: number): Promise<void> {
-    const client = this.ensureConfigured();
-    const { error } = await client.from('inventory_movements').delete().eq('id', id);
-    if (error) throw error;
+  async deleteMovement(_id: number): Promise<void> {
+    throw new Error('Direct deletion of inventory movements is forbidden to maintain accounting integrity. Please record a correcting Stock Adjustment instead.');
   }
 
   // ==========================================
@@ -1324,7 +1361,12 @@ export class SupabaseErpDataSource implements ErpDataSource {
         .select('*', { count: 'exact', head: true })
         .eq('salesperson_id', user.cloudId);
 
-      const hasHistory = (ordersCount || 0) > 0;
+      const { count: retailersCount } = await client
+        .from('retailers')
+        .select('*', { count: 'exact', head: true })
+        .eq('assigned_salesperson_id', user.cloudId);
+
+      const hasHistory = (ordersCount || 0) > 0 || (retailersCount || 0) > 0;
       if (hasHistory) {
         // Soft deactivate/archive
         const { error } = await client
@@ -1367,8 +1409,13 @@ export class SupabaseErpDataSource implements ErpDataSource {
         .select('*', { count: 'exact', head: true })
         .eq('salesperson_id', user.cloudId);
 
-      if ((ordersCount || 0) > 0) {
-        throw new Error('Cannot permanently delete sales team member: historical orders are associated with their profile.');
+      const { count: retailersCount } = await client
+        .from('retailers')
+        .select('*', { count: 'exact', head: true })
+        .eq('assigned_salesperson_id', user.cloudId);
+
+      if ((ordersCount || 0) > 0 || (retailersCount || 0) > 0) {
+        throw new Error('This sales team member has historical transactions and has been made inactive. Historical records remain preserved.');
       }
 
       const { error } = await client.from('profiles').delete().eq('id', user.cloudId);
